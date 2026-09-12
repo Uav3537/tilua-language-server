@@ -304,6 +304,37 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`${shape}const w = 5\nconst s: Shape = {\n    width: ‸\n}\n`).includes("height"), false)
 }
 
+// --- a string argument that depends on another argument --------------------
+{
+    const labelsAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    const head = [
+        `const Rows = {`,
+        `    a: [`,
+        `        { Page: "Bones", Skills: ["Bonespam", "Bonewall"] },`,
+        `        { Page: "Fire", Skills: ["Geyser"] },`,
+        `    ],`,
+        `} as const`,
+        `type Row = (typeof Rows)["a"][number]`,
+        `declare function get<P extends Row["Page"]>(`,
+        `    page: P,`,
+        `    skill: Extract<Row, { Page: P }>["Skills"][number],`,
+        `): boolean`,
+        "",
+    ].join("\n")
+    check("completion: the page, then that page's skills", [
+        labelsAt(`${head}get("‸")\n`).sort(),
+        labelsAt(`${head}get("Bones", "‸")\n`).sort(),
+        labelsAt(`${head}get("Fire", "‸")\n`).sort(),
+    ], [
+        ["Bones", "Fire"],
+        ["Bonespam", "Bonewall"],
+        ["Geyser"],
+    ])
+}
+
 // --- what hoisting makes visible before its declaration --------------------
 {
     const labelsAt = (src: string): string[] => {
