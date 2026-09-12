@@ -114,7 +114,7 @@ export function completion(
     for (const binding of first.analysis.scopes.bindings.values()) taken.add(binding.name)
     const current = analyzer.get(document)
     return [
-        ...valueItems(first.analysis, at),
+        ...valueItems(first.analysis, at, insideFunction(first.path)),
         ...contextKeywords(source.slice(0, start)),
         ...importItems(analyzer, current, false, taken),
         ...serviceItems(current, taken),
@@ -344,12 +344,22 @@ function isMethodOnly(type: Type | undefined): boolean {
     }
 }
 
+/** Is the cursor inside a function body? Code there runs after the module
+ *  has, so it sees the module's later names — which is why completion offers
+ *  them there and not in a statement that runs straight away. */
+function insideFunction(path: readonly Spanned[]): boolean {
+    return path.some(n => n.type === "FunctionExpression" || n.type === "FunctionDeclaration"
+        || n.type === "FunctionDeclarationStatement" || n.type === "FunctionBody")
+}
+
 /** Names in scope at `at`. Scope analysis records where each binding is
  *  declared but not the extent of its scope, so this approximates: everything
- *  declared earlier in the file, plus the globals, which are visible
- *  everywhere. Over-offering is the right failure — a name the editor lists
- *  and the file rejects is a diagnostic away from being obvious. */
-function valueItems(analysis: Analysis, at: Position): CompletionItem[] {
+ *  declared earlier in the file, plus what hoisting makes visible before its
+ *  declaration — a function declaration anywhere, and any later name to code
+ *  inside a function body — plus the globals, which are visible everywhere.
+ *  Over-offering is the right failure: a name the editor lists and the file
+ *  rejects is a diagnostic away from being obvious. */
+function valueItems(analysis: Analysis, at: Position, inFunction: boolean): CompletionItem[] {
     const items: CompletionItem[] = []
     const seen = new Set<string>()
     for (const binding of analysis.scopes.bindings.values()) {
@@ -357,7 +367,10 @@ function valueItems(analysis: Analysis, at: Position): CompletionItem[] {
         // `import type` names are not values.
         if (binding.declaredBy === "type") continue
         const declaration = binding.declarationNode as unknown as Spanned | undefined
-        if (declaration && declaration.line.start - 1 > at.line) continue
+        const later = declaration !== undefined && declaration.line.start - 1 > at.line
+        // A function declaration is visible to its whole block, and everything
+        // a module declares is visible to code that runs later.
+        if (later && !inFunction && binding.declaredBy !== "function") continue
         seen.add(binding.name)
         const type = analysis.types.bindingType.get(binding.id)
         items.push({

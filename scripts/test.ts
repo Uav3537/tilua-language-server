@@ -304,6 +304,24 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`${shape}const w = 5\nconst s: Shape = {\n    width: ‸\n}\n`).includes("height"), false)
 }
 
+// --- what hoisting makes visible before its declaration --------------------
+{
+    const labelsAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    const file = (head: string) =>
+        `${head}function later(): number\n    return 1\nend\nconst afterConst = 2\n`
+
+    const top = labelsAt(file("const v = ‸\n"))
+    check("completion: a function declared below is offered; a later const is not",
+        [top.includes("later"), top.includes("afterConst")], [true, false])
+
+    const body = labelsAt(file("function first()\n    return ‸\nend\n"))
+    check("completion: inside a function body, the module's later names are too",
+        [body.includes("later"), body.includes("afterConst")], [true, true])
+}
+
 // --- the methods arrays and strings answer to ------------------------------
 {
     const labelsAt = (src: string): string[] => {
