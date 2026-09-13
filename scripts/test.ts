@@ -61,7 +61,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
 }
 {
     const { document, cursor } = open(
-        `declare v: string | nil\nif v ~= nil then\n    print(‸v)\nend\n`,
+        `declare v: string | nil\nif (v ~= nil) {\n    print(‸v)\n}\n`,
     )
     const result = hover(analyzer.get(document), cursor)
     check("hover: shows the narrowed type", (result?.contents as { value: string }).value,
@@ -86,10 +86,10 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("hover: a let declaration", hoverText(`let cou‸nt = 1\nprint(count)\n`),
         "```luaut-hover\nlet count: number\n```")
     check("hover: a parameter",
-        hoverText(`function f(x‸s: number[]): number\n    return #xs\nend\n`),
+        hoverText(`function f(x‸s: number[]): number {\n    return #xs\n}\n`),
         "```luaut-hover\n(parameter) xs: number[]\n```")
     check("hover: a function name",
-        hoverText(`function first‸Two(xs: number[]): number\n    return 1\nend\n`),
+        hoverText(`function first‸Two(xs: number[]): number {\n    return 1\n}\n`),
         "```luaut-hover\nfunction firstTwo(xs: number[]) => number\n```")
     check("hover: nothing on an operator", hoverText(`declare a: boolean\ndeclare b: number\nconst c = a a‸nd b\n`), undefined)
     check("hover: nothing on a parenthesis", hoverText(`print( ‸ 1)\n`), undefined)
@@ -236,7 +236,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("classes: inherited members complete", labels, "Name")
     contains("classes: own members complete", labels, "Shape")
     check("classes: a callback parameter is typed from the event",
-        hoverText(`game:GetService("Players").PlayerAdded:Connect(function(pla‸yer) end)\n`), "(parameter) player: Player")
+        hoverText(`game:GetService("Players").PlayerAdded:Connect(function(pla‸yer) {})\n`), "(parameter) player: Player")
     check("classes: a qualified enum type",
         hoverText(`const m: Enum.Mate‸rial = Enum.Material.Neon\n`), "declare class Enum.Material extends EnumItem {}")
     const enumLabels = (src: string): string[] => {
@@ -277,7 +277,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const indexed = `type R = { RemoteMap: { Char: number }, ClassMap: { Sans: string } }\nconst t = { x: 1, y: 2 }\n`
     check("completion: the keys a string can index, in a type, a constraint and a value", [
         labelsAt(`${indexed}type K = R["‸"]\n`).sort(),
-        labelsAt(`${indexed}function f<K extends R["RemoteMap"]["‸"]>(k: K) end\n`),
+        labelsAt(`${indexed}function f<K extends R["RemoteMap"]["‸"]>(k: K) {}\n`),
         labelsAt(`${indexed}print(t["‸"])\n`).sort(),
     ], [["ClassMap", "RemoteMap"], ["Char"], ["x", "y"]])
     check("completion: a broken field leaves the rest of the object",
@@ -343,13 +343,13 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         return completion(analyzer, document, cursor).map(i => i.label)
     }
     const file = (head: string) =>
-        `${head}function later(): number\n    return 1\nend\nconst afterConst = 2\n`
+        `${head}function later(): number {\n    return 1\n}\nconst afterConst = 2\n`
 
     const top = labelsAt(file("const v = ‸\n"))
     check("completion: a function declared below is offered; a later const is not",
         [top.includes("later"), top.includes("afterConst")], [true, false])
 
-    const body = labelsAt(file("function first()\n    return ‸\nend\n"))
+    const body = labelsAt(file("function first() {\n    return ‸\n}\n"))
     check("completion: inside a function body, the module's later names are too",
         [body.includes("later"), body.includes("afterConst")], [true, true])
 }
@@ -406,7 +406,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         hoverText(`${ternary}const v = c ? a : ‸b\n`),
     ], ["c: boolean", "a: 1", "b: 2"])
 
-    const overloads = `export function f(x: "a"): number\nexport function f(x: "b"): string\nexport function f(x)\n    return nil\nend\nprint(f("a"))\n`
+    const overloads = `export function f(x: "a"): number\nexport function f(x: "b"): string\nexport function f(x) {\n    return nil\n}\nprint(f("a"))\n`
     check("hover: each line of an overload set shows its own signature, the body's line the whole set", [
         hoverText(overloads.replace(`function f(x: "a")`, `function ‸f(x: "a")`)),
         hoverText(overloads.replace(`function f(x: "b")`, `function ‸f(x: "b")`)),
@@ -452,8 +452,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         diagnostics(analyzer.get(open(src).document)).map(d => d.message)
     check("types: a name nothing declares", [
         messagesFor(`const x: Nope = 1\n`),
-        messagesFor(`function f(a: NoParam): NoReturn\n    return a\nend\n`),
-        messagesFor(`const p: Part = Instance.new("Part")\nconst m: Enum.Material = Enum.Material.Grass\ntype Mine = { a: number }\nconst mine: Mine = { a: 1 }\nfunction g<T>(v: T): T\n    return v\nend\n`),
+        messagesFor(`function f(a: NoParam): NoReturn {\n    return a\n}\n`),
+        messagesFor(`const p: Part = Instance.new("Part")\nconst m: Enum.Material = Enum.Material.Grass\ntype Mine = { a: number }\nconst mine: Mine = { a: 1 }\nfunction g<T>(v: T): T {\n    return v\n}\n`),
         messagesFor(`type Cased = Uppercase<"a">\nconst c: Cased = "A"\n`),
     ], [
         ["Cannot find name 'Nope'"],
@@ -468,7 +468,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     }
     const mode = `type Mode = "fast" | "slow"\n`
     check("completion: the values a type admits, where one is written", [
-        valuesAt(`${mode}function f(m: Mode = "‸")\nend\n`).sort(),
+        valuesAt(`${mode}function f(m: Mode = "‸") {}\n`).sort(),
         valuesAt(`${mode}const m: Mode = "‸"\n`).sort(),
         valuesAt(`${mode}type Cfg = { mode: Mode }\nconst c: Cfg = { mode: "‸" }\n`).sort(),
     ], [["fast", "slow"], ["fast", "slow"], ["fast", "slow"]])
@@ -491,7 +491,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("completion: `extends` after a type parameter's name", keywordsAt(`function f<K ‸>() end\n`), ["extends"])
     check("completion: `as` and `satisfies` after an expression",
         keywordsAt(`const v = { a: 1 } ‸\n`), ["as", "satisfies"])
-    check("completion: and nowhere else", [keywordsAt(`const a = 1\n‸\n`), keywordsAt(`function f()\n    ‸\nend\n`)], [[], []])
+    check("completion: and nowhere else", [keywordsAt(`const a = 1\n‸\n`), keywordsAt(`function f() {\n    ‸\n}\n`)], [[], []])
 
     const hoverText = (src: string): string | undefined => {
         const { document, cursor } = open(src)
@@ -499,9 +499,9 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
             ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
     }
     check("hover: `...` is what the function declared it takes",
-        hoverText(`function f(...: number)\n    print(‸...)\nend\n`), "(vararg) ...: number")
+        hoverText(`function f(...: number) {\n    print(‸...)\n}\n`), "(vararg) ...: number")
     check("hover: an undeclared `...`",
-        hoverText(`function f(...)\n    print(‸...)\nend\n`), "(vararg) ...: any")
+        hoverText(`function f(...) {\n    print(‸...)\n}\n`), "(vararg) ...: any")
 }
 
 // --- hover inside a destructuring pattern --------------------------------
@@ -523,7 +523,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("hover: a nested shorthand key",
         hoverText(`${t}const { nested: { de‸ep } } = t\n`), "const deep: number")
     check("hover: a destructured parameter",
-        hoverText(`function f({ a‸ }: { a: number }) end\n`), "(parameter) a: number")
+        hoverText(`function f({ a‸ }: { a: number }) {}\n`), "(parameter) a: number")
     check("hover: a destructuring assignment target",
         hoverText(`${t}let other = ""\n{ oth‸er } = t\n`), "let other: string")
     check("hover: the rest of a pattern, without what it did not take",
@@ -579,10 +579,12 @@ print(later)
     writeFileSync(join(root, "shared", "shapes.luaut"), [
         "export type Point = { x: number, y: number }",
         "export const ORIGIN: Point = { x: 0, y: 0 }",
-        "export function distance(a: Point, b: Point): number",
+        "export function distance(a: Point, b: Point): number {",
         "    return a.x - b.x",
-        "end",
+        "}",
         "export default ORIGIN",
+        "",
+        "",
         "",
     ].join("\n"))
 
@@ -777,8 +779,8 @@ print(later)
 
     const root = mkdtempSync(join(tmpdir(), "luaut-cycles-"))
     const files: Record<string, string> = {
-        "values/a.luaut": `import { fromB } from "./b"\nexport function fromA(): number\n    return 1\nend\nconst wrongA: number = fromB()\nprint(wrongA)\n`,
-        "values/b.luaut": `import { fromA } from "./a"\nexport function fromB(): string\n    return "b"\nend\nconst wrongB: string = fromA()\nprint(wrongB)\n`,
+        "values/a.luaut": `import { fromB } from "./b"\nexport function fromA(): number {\n    return 1\n}\nconst wrongA: number = fromB()\nprint(wrongA)\n`,
+        "values/b.luaut": `import { fromA } from "./a"\nexport function fromB(): string {\n    return "b"\n}\nconst wrongB: string = fromA()\nprint(wrongB)\n`,
         "types/a.luaut": `import { B } from "./b"\nexport type A = { name: string, b: B | nil }\nconst wrongA: A = { name: 1, b: nil }\nprint(wrongA)\n`,
         "types/b.luaut": `import { A } from "./a"\nexport type B = { count: number, a: A | nil }\nconst wrongB: B = { count: "x", a: nil }\nprint(wrongB)\n`,
         "star/a.luaut": `export * from "./b"\nexport const ONE = 1\n`,
@@ -786,8 +788,8 @@ print(later)
         "star/main.luaut": `import { ONE, TWO } from "./a"\nconst bad1: string = ONE\nconst bad2: string = TWO\nprint(bad1, bad2)\n`,
         // What the first pass alone got wrong: exports of the far side inferred
         // from the near side.
-        "back/a.luaut": `import { useA, AliasOfA, takesA } from "./b"\nexport function fromA(): number\n    return 1\nend\nexport type A = { name: string }\nconst viaValue: string = useA\nconst viaAlias: AliasOfA = { name: 1 }\nconst viaFunction: string = takesA({ name: "x" })\nprint(viaValue, viaAlias, viaFunction)\n`,
-        "back/b.luaut": `import { fromA, A } from "./a"\nexport const useA = fromA()\nexport type AliasOfA = A\nexport function takesA(a: A): number\n    return 1\nend\n`,
+        "back/a.luaut": `import { useA, AliasOfA, takesA } from "./b"\nexport function fromA(): number {\n    return 1\n}\nexport type A = { name: string }\nconst viaValue: string = useA\nconst viaAlias: AliasOfA = { name: 1 }\nconst viaFunction: string = takesA({ name: "x" })\nprint(viaValue, viaAlias, viaFunction)\n`,
+        "back/b.luaut": `import { fromA, A } from "./a"\nexport const useA = fromA()\nexport type AliasOfA = A\nexport function takesA(a: A): number {\n    return 1\n}\n`,
         // A cycle the opened file is not part of: b <-> c.
         "deep/main.luaut": `import { doubled } from "./b"\nconst wrong: string = doubled\nprint(wrong)\n`,
         "deep/b.luaut": `import { derived } from "./c"\nexport const base = 1\nexport const doubled = derived\n`,
@@ -988,7 +990,7 @@ print(later)
 // --- signature help ----------------------------------------------------
 {
     const { document, cursor } = open(
-        `function add(a: number, b: string): number\n    return a\nend\nadd(1, ‸)\n`,
+        `function add(a: number, b: string): number {\n    return a\n}\nadd(1, ‸)\n`,
     )
     const help = signatureHelp(analyzer, document, cursor)
     check("signature help: label", help?.signatures[0]?.label, "(a: number, b: string) => number")
@@ -1009,8 +1011,8 @@ print(later)
         `    Char: ReplicatedStorage:FindFirstChild("Char") as RemoteEvent,`,
         `    GetSettings: ReplicatedStorage:FindFirstChild("GetSettings") as RemoteFunction,`,
         `}`,
-        `function scan()`,
-        `    for RemoteName, Remote in pairs(Remotes) do`,
+        `function scan() {`,
+        `    for (RemoteName, Remote in pairs(Remotes)) {`,
     ].join("\n") + "\n"
     const labelsAt = (src: string): string[] => {
         const opened = open(src)
@@ -1022,13 +1024,13 @@ print(later)
             ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
     }
     check("records: a pairs key is the union of the property names",
-        hoverAt(head + `        print(Remote‸Name)\n    end\nend\n`), `RemoteName: "Char" | "GetSettings"`)
+        hoverAt(head + `        print(Remote‸Name)\n    }\n}\n`), `RemoteName: "Char" | "GetSettings"`)
     check("records: testing the key narrows the value",
-        hoverAt(head + `        if RemoteName == "GetSettings" then print(Rem‸ote) end\n    end\nend\n`), "Remote: RemoteFunction")
+        hoverAt(head + `        if (RemoteName == "GetSettings") { print(Rem‸ote) }\n    }\n}\n`), "Remote: RemoteFunction")
     check("records: a compared string offers the keys",
-        labelsAt(head + `        if RemoteName == "‸" then end\n    end\nend\n`), ["Char", "GetSettings"])
+        labelsAt(head + `        if (RemoteName == "‸") {}\n    }\n}\n`), ["Char", "GetSettings"])
     check("records: ...while the line is still being typed",
-        labelsAt(head + `        if RemoteName == "‸\n    end\nend\n`), ["Char", "GetSettings"])
+        labelsAt(head + `        if (RemoteName == "‸\n    }\n}\n`), ["Char", "GetSettings"])
     check("records: an unclosed argument string offers its values too",
         labelsAt(`const P = game:GetService("Play‸\n`).includes("Players"), true)
     check("records: an indexer holds only its value type",
@@ -1040,7 +1042,7 @@ print(later)
 // --- symbols -----------------------------------------------------------
 {
     const { document } = open(
-        `type Point = { x: number }\nconst origin = 1\nconst function go(): nil\n    return nil\nend\n`,
+        `type Point = { x: number }\nconst origin = 1\nconst function go(): nil {\n    return nil\n}\n`,
     )
     const names = documentSymbols(analyzer.get(document)).map(s => s.name)
     check("symbols: outline", names, ["Point", "origin", "go"])
@@ -1056,29 +1058,31 @@ print(later)
 // --- classes -----------------------------------------------------------
 {
     const CLASS = [
-        "class Animal",
+        "class Animal {",
         "    name: string",
         "    static count = 0",
-        "    constructor(name: string)",
+        "    constructor(name: string) {",
         "        this.name = name",
-        "    end",
-        "    function speak(): string",
+        "    }",
+        "    function speak(): string {",
         "        return this.name",
-        "    end",
-        "    get label(): string",
+        "    }",
+        "    get label(): string {",
         "        return this.name",
-        "    end",
-        "end",
-        "class Dog extends Animal",
-        `    breed = "corgi"`,
-        "    constructor(name: string)",
+        "    }",
+        "}",
+        "class Dog extends Animal {",
+        "    breed = \"corgi\"",
+        "    constructor(name: string) {",
         "        super(name)",
-        "    end",
-        "    function fetch(): boolean",
+        "    }",
+        "    function fetch(): boolean {",
         "        return true",
-        "    end",
-        "end",
-        `const d = new Dog("Rex")`,
+        "    }",
+        "}",
+        "const d = new Dog(\"Rex\")",
+        "",
+        "",
         "",
     ].join("\n")
 
@@ -1095,15 +1099,15 @@ print(later)
         labels(`${CLASS}Dog.‸\n`).sort(), ["ParentClass", "count", "new"])
     contains("completion: `new` offers the classes in scope", labels(`${CLASS}const z = new ‸\n`), "Dog")
     check("completion: `this` is the instance being written", labels([
-        "class A",
+        "class A {",
         "    x: number",
-        "    constructor()",
+        "    constructor() {",
         "        this.x = 1",
-        "    end",
-        "    function m()",
+        "    }",
+        "    function m() {",
         "        this.‸",
-        "    end",
-        "end",
+        "    }",
+        "}",
     ].join("\n")).sort(), ["ClassObject", "m", "x"])
 
     // A class is shown the way it is written, not as a `declare class`.
@@ -1111,13 +1115,13 @@ print(later)
         const { document, cursor } = open(CLASS.replace("class Dog", "class Do‸g"))
         check("hover: a class reads as it is written",
             (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nclass Dog extends Animal\n    breed: string\n    fetch: (this: Dog) => boolean\nend\n```")
+            "```luaut-hover\nclass Dog extends Animal {\n    breed: string\n    fetch: (this: Dog) => boolean\n}\n```")
     }
     {
         const { document, cursor } = open(`${CLASS}const y: An‸imal = d\n`)
         check("hover: naming a class in a type shows the class",
             (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nclass Animal\n    name: string\n    speak: (this: Animal) => string\n    readonly label: string\nend\n```")
+            "```luaut-hover\nclass Animal {\n    name: string\n    speak: (this: Animal) => string\n    readonly label: string\n}\n```")
     }
 
     // The outline lists a class and what is in it.
@@ -1136,7 +1140,7 @@ print(later)
         const target = definition(analyzer.get(document), cursor)
         check("definition: `new Dog(...)` goes to the class",
             target && (target as { range: { start: { line: number } } }).range.start.line,
-            CLASS.split("\n").indexOf("class Dog extends Animal"))
+            CLASS.split("\n").findIndex(line => line.startsWith("class Dog")))
     }
 
     {
@@ -1147,15 +1151,17 @@ print(later)
     // A generic class: the arguments reach hover and completion.
     {
         const BOX = [
-            "class Box<T>",
+            "class Box<T> {",
             "    value: T",
-            "    constructor(value: T)",
+            "    constructor(value: T) {",
             "        this.value = value",
-            "    end",
-            "    function get(): T",
+            "    }",
+            "    function get(): T {",
             "        return this.value",
-            "    end",
-            "end",
+            "    }",
+            "}",
+            "",
+            "",
             "",
         ].join("\n")
         const { document, cursor } = open(`${BOX}const n‸ = new Box("a")\n`)
@@ -1175,14 +1181,16 @@ print(later)
     // A class written as a value takes the name it is bound to.
     {
         const source = [
-            "const Counter = class",
+            "const Counter = class {",
             "    n = 0",
-            "    function bump(): number",
+            "    function bump(): number {",
             "        this.n += 1",
             "        return this.n",
-            "    end",
-            "end",
+            "    }",
+            "}",
             "const c = new Counter()",
+            "",
+            "",
             "",
         ].join("\n")
         const { document } = open(source)

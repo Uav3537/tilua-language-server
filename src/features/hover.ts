@@ -295,12 +295,12 @@ function classText(analysis: Analysis, name: string): string | undefined {
         key !== "ClassObject" &&
         (inherited?.kind !== "object" || inherited.properties.get(key) !== property))
     // A `class ... end` and a `declare class` are the same type; only the way
-    // they are written differs, and hover shows each the way it is written.
+    // they are written differs, and hover shows each the way it is written. A
+    // definitions file separates its members with commas, as a type does.
     const written = isRuntimeClass(analysis, name)
     const head = `${written ? "" : "declare "}class ${name}${superclass ? ` extends ${superclass}` : ""}`
     const lines = own.map(([key, property]) =>
         `    ${property.readonly ? "readonly " : ""}${key}${property.optional ? "?" : ""}: ${formatType(property.type)}${written ? "" : ","}`)
-    if (written) return own.length ? `${head}\n${lines.join("\n")}\nend` : `${head}\nend`
     return own.length ? `${head} {\n${lines.join("\n")}\n}` : `${head} {}`
 }
 
