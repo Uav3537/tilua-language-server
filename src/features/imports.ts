@@ -258,7 +258,7 @@ export function exportDeclaration(
                 break
             case "ExportStatement": {
                 const declaration = statement.declaration
-                if (declaration.type === "FunctionDeclaration") {
+                if (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration") {
                     if (declaration.name.name === name) return here(declaration.name)
                 } else {
                     for (const target of declaration.names) {

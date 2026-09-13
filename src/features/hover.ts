@@ -110,6 +110,20 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
                 case "DeclareClassStatement":
                     if (parent.name === node) return classText(analysis, name)
                     break
+                case "ClassDeclaration":
+                    if (parent.name === node) return classText(analysis, name)
+                    break
+                case "ClassField":
+                    if (parent.name === node) {
+                        const type = typeOfNode(parent.typeAnnotation) ??
+                            types.typeOf.get(parent.init as Expression | undefined as Expression)
+                        const prefix = parent.isStatic ? "(static) " : "(field) "
+                        return type ? `${prefix}${name}: ${pretty(type)}` : `${prefix}${name}`
+                    }
+                    break
+                case "ClassAccessor":
+                    if (parent.name === node) return `(${parent.kind === "get" ? "getter" : "setter"}) ${name}`
+                    break
                 case "TableTypeProperty":
                     if (parent.key === node) {
                         const type = typeOfNode(parent.valueType)
@@ -240,11 +254,23 @@ function classText(analysis: Analysis, name: string): string | undefined {
     const inherited = superclass ? analysis.types.aliases.get(superclass) : undefined
     const own = [...type.properties].filter(([key, property]) =>
         inherited?.kind !== "object" || inherited.properties.get(key) !== property)
-    const head = `declare class ${name}${superclass ? ` extends ${superclass}` : ""}`
-    if (!own.length) return `${head} {}`
+    // A `class ... end` and a `declare class` are the same type; only the way
+    // they are written differs, and hover shows each the way it is written.
+    const written = isRuntimeClass(analysis, name)
+    const head = `${written ? "" : "declare "}class ${name}${superclass ? ` extends ${superclass}` : ""}`
     const lines = own.map(([key, property]) =>
-        `    ${property.readonly ? "readonly " : ""}${key}${property.optional ? "?" : ""}: ${formatType(property.type)},`)
-    return `${head} {\n${lines.join("\n")}\n}`
+        `    ${property.readonly ? "readonly " : ""}${key}${property.optional ? "?" : ""}: ${formatType(property.type)}${written ? "" : ","}`)
+    if (written) return own.length ? `${head}\n${lines.join("\n")}\nend` : `${head}\nend`
+    return own.length ? `${head} {\n${lines.join("\n")}\n}` : `${head} {}`
+}
+
+/** Is `name` a class this file writes out, rather than one a definitions
+ *  file declares? */
+function isRuntimeClass(analysis: Analysis, name: string): boolean {
+    return analysis.program.body.statements.some(statement => {
+        const declaration = statement.type === "ExportStatement" ? statement.declaration : statement
+        return declaration.type === "ClassDeclaration" && declaration.name.name === name
+    })
 }
 
 interface TypeParameterNode {

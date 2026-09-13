@@ -95,7 +95,9 @@ export function membersOf(
 
 export function takesSelf(type: Type): boolean {
     for (const signature of signaturesOf(type)) {
-        if (signature.params[0]?.name === "self") return true
+        // A class method writes its receiver `this`; `function T:m()` writes `self`.
+        const first = signature.params[0]?.name
+        if (first === "self" || first === "this") return true
     }
     return false
 }

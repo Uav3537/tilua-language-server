@@ -37,7 +37,7 @@ export const semanticTokensLegend: SemanticTokensLegend = {
  *  AST did not already claim it as a name. */
 const SOFT_KEYWORDS = new Set([
     "type", "declare", "class", "extends", "keyof", "infer", "readonly", "is", "asserts", "satisfies", "typeof",
-    "default",
+    "default", "new", "super",
 ])
 
 /** Soft keywords that belong with `export` / `return` rather than with
@@ -126,6 +126,28 @@ function classify(
             return
         }
 
+        // A class body's own words. `get`, `set`, `static` and `constructor`
+        // are ordinary names anywhere else, so they are coloured from the
+        // member they open rather than wherever they are written.
+        case "ClassMethod":
+        case "ClassField":
+        case "ClassAccessor":
+        case "ClassConstructor": {
+            const opener = node.type === "ClassConstructor" ? "constructor"
+                : node.type === "ClassAccessor" ? node.kind as string
+                : undefined
+            const words = firstTokensWithin(identifiers, node, 2)
+            let index = 0
+            if (node.isStatic === true && words[index] && wordOf(words[index]) === "static") {
+                add(words[index], "static".length, "keyword")
+                index++
+            }
+            if (opener && words[index] && wordOf(words[index]) === opener) {
+                add(words[index], opener.length, "keyword")
+            }
+            return
+        }
+
         case "TypeReference": {
             const base = node.base as string
             const namespace = node.namespace as string | undefined
@@ -143,6 +165,11 @@ function classify(
             return
         }
     }
+}
+
+function wordOf(token: Token): string | undefined {
+    const value = (token as { value?: unknown }).value
+    return typeof value === "string" ? value : undefined
 }
 
 function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefined, add: Add): void {
@@ -168,6 +195,19 @@ function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefin
             break
         case "DeclareClassStatement":
             if (parent.name === node) return as("class", ["declaration"])
+            break
+        case "ClassDeclaration":
+            if (parent.name === node) return as("class", ["declaration"])
+            if (parent.superclass === node) return as("class")
+            break
+        case "ClassMethod":
+            if (parent.name === node) return as("method", ["declaration"])
+            break
+        case "ClassField":
+            if (parent.name === node) return as("property", ["declaration"])
+            break
+        case "ClassAccessor":
+            if (parent.name === node) return as("property", ["declaration"])
             break
         case "DeclareStatement":
             if (parent.id === node) return as(isFunction(typeOfNode(parent.valueType)) ? "function" : "variable", ["declaration"])

@@ -1,6 +1,6 @@
 /** Document symbols: the outline of a file. */
 import { SymbolKind, type DocumentSymbol } from "vscode-languageserver"
-import { formatType, type Identifier } from "luaut-parser"
+import { formatType, type ClassDeclaration, type ClassMember, type Identifier } from "luaut-parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
 import { toRange, walk, type Spanned } from "../ast-utils.js"
 
@@ -27,6 +27,15 @@ export function documentSymbols(analysis: Analysis): DocumentSymbol[] {
                 }
                 break
             }
+            case "ClassDeclaration": {
+                const declaration = node as unknown as ClassDeclaration
+                const superclass = declaration.superclass?.name
+                out.push({
+                    ...symbol(declaration.name.name, SymbolKind.Class, node, superclass && `extends ${superclass}`),
+                    children: declaration.members.map(member => classMember(analysis, member)),
+                })
+                break
+            }
             case "DeclareClassStatement": {
                 const name = (node as unknown as { name: Identifier }).name.name
                 const superclass = (node as unknown as { superclass?: { base: string } }).superclass?.base
@@ -44,6 +53,22 @@ export function documentSymbols(analysis: Analysis): DocumentSymbol[] {
     })
 
     return out
+}
+
+/** One line of a class's outline. A `get`/`set` is a property, not a
+ *  function: that is how it is read. */
+function classMember(analysis: Analysis, member: ClassMember): DocumentSymbol {
+    switch (member.type) {
+        case "ClassConstructor":
+            return symbol("constructor", SymbolKind.Constructor, member)
+        case "ClassField":
+            return symbol(member.name.name, member.isStatic ? SymbolKind.Constant : SymbolKind.Field, member,
+                member.typeAnnotation ? undefined : detailOf(analysis, member))
+        case "ClassAccessor":
+            return symbol(member.name.name, SymbolKind.Property, member, member.kind)
+        case "ClassMethod":
+            return symbol(member.name.name, SymbolKind.Method, member, member.isStatic ? "static" : undefined)
+    }
 }
 
 function functionName(node: Spanned): string | undefined {

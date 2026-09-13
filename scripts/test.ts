@@ -14,6 +14,7 @@ import { definition, references, rename } from "../src/features/navigation.js"
 import { completion } from "../src/features/completion.js"
 import { signatureHelp } from "../src/features/signatureHelp.js"
 import { documentSymbols } from "../src/features/symbols.js"
+import { SymbolKind } from "vscode-languageserver"
 import { semanticTokens } from "../src/features/semanticTokens.js"
 import type { Position } from "vscode-languageserver"
 
@@ -1052,6 +1053,98 @@ print(later)
 }
 
 // -----------------------------------------------------------------------
+// --- classes -----------------------------------------------------------
+{
+    const CLASS = [
+        "class Animal",
+        "    name: string",
+        "    static count = 0",
+        "    constructor(name: string)",
+        "        this.name = name",
+        "    end",
+        "    function speak(): string",
+        "        return this.name",
+        "    end",
+        "    get label(): string",
+        "        return this.name",
+        "    end",
+        "end",
+        "class Dog extends Animal",
+        `    breed = "corgi"`,
+        "    constructor(name: string)",
+        "        super(name)",
+        "    end",
+        "    function fetch(): boolean",
+        "        return true",
+        "    end",
+        "end",
+        `const d = new Dog("Rex")`,
+        "",
+    ].join("\n")
+
+    const labels = (source: string): string[] => {
+        const opened = open(source)
+        return completion(analyzer, opened.document, opened.cursor).map(i => i.label)
+    }
+
+    check("completion: an instance offers its members and the ones it inherits",
+        labels(`${CLASS}d.‸\n`).sort(), ["breed", "fetch", "label", "name", "speak"])
+    check("completion: `:` offers only what takes the instance",
+        labels(`${CLASS}d:‸\n`).sort(), ["fetch", "speak"])
+    check("completion: the class table offers its statics and `new`",
+        labels(`${CLASS}Dog.‸\n`).sort(), ["count", "new"])
+    contains("completion: `new` offers the classes in scope", labels(`${CLASS}const z = new ‸\n`), "Dog")
+    check("completion: `this` is the instance being written", labels([
+        "class A",
+        "    x: number",
+        "    constructor()",
+        "        this.x = 1",
+        "    end",
+        "    function m()",
+        "        this.‸",
+        "    end",
+        "end",
+    ].join("\n")).sort(), ["m", "x"])
+
+    // A class is shown the way it is written, not as a `declare class`.
+    {
+        const { document, cursor } = open(CLASS.replace("class Dog", "class Do‸g"))
+        check("hover: a class reads as it is written",
+            (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
+            "```luaut-hover\nclass Dog extends Animal\n    breed: string\n    fetch: (this: Dog) -> boolean\nend\n```")
+    }
+    {
+        const { document, cursor } = open(`${CLASS}const y: An‸imal = d\n`)
+        check("hover: naming a class in a type shows the class",
+            (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
+            "```luaut-hover\nclass Animal\n    name: string\n    speak: (this: Animal) -> string\n    readonly label: string\nend\n```")
+    }
+
+    // The outline lists a class and what is in it.
+    {
+        const { document } = open(CLASS)
+        const symbols = documentSymbols(analyzer.get(document))
+        const dog = symbols.find(s => s.name === "Dog")
+        check("symbols: a class is an outline entry with its members under it",
+            [dog?.kind, dog?.detail, dog?.children?.map(c => c.name)],
+            [SymbolKind.Class, "extends Animal", ["breed", "constructor", "fetch"]])
+    }
+
+    // Go to definition on a construction lands on the class.
+    {
+        const { document, cursor } = open(`${CLASS}const q = new D‸og("a")\n`)
+        const target = definition(analyzer.get(document), cursor)
+        check("definition: `new Dog(...)` goes to the class",
+            target && (target as { range: { start: { line: number } } }).range.start.line,
+            CLASS.split("\n").indexOf("class Dog extends Animal"))
+    }
+
+    {
+        const { document } = open(CLASS)
+        check("diagnostics: a plain class reports nothing", diagnostics(analyzer.get(document)).map(d => d.message), [])
+    }
+}
+
 for (const failure of failures) console.log(`FAIL ${failure}`)
 console.log(`\n${passed} passed, ${failures.length} failed`)
 process.exit(failures.length ? 1 : 0)
