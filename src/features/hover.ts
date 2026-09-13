@@ -253,7 +253,9 @@ function classText(analysis: Analysis, name: string): string | undefined {
     const superclass = type.class.superclass
     const inherited = superclass ? analysis.types.aliases.get(superclass) : undefined
     const own = [...type.properties].filter(([key, property]) =>
-        inherited?.kind !== "object" || inherited.properties.get(key) !== property)
+        // `ClassObject` is on every instance and says nothing about this one.
+        key !== "ClassObject" &&
+        (inherited?.kind !== "object" || inherited.properties.get(key) !== property))
     // A `class ... end` and a `declare class` are the same type; only the way
     // they are written differs, and hover shows each the way it is written.
     const written = isRuntimeClass(analysis, name)

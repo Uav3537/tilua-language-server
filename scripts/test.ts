@@ -1087,12 +1087,12 @@ print(later)
         return completion(analyzer, opened.document, opened.cursor).map(i => i.label)
     }
 
-    check("completion: an instance offers its members and the ones it inherits",
-        labels(`${CLASS}d.‸\n`).sort(), ["breed", "fetch", "label", "name", "speak"])
+    check("completion: an instance offers its members, the inherited ones, and its class",
+        labels(`${CLASS}d.‸\n`).sort(), ["ClassObject", "breed", "fetch", "label", "name", "speak"])
     check("completion: `:` offers only what takes the instance",
         labels(`${CLASS}d:‸\n`).sort(), ["fetch", "speak"])
-    check("completion: the class table offers its statics and `new`",
-        labels(`${CLASS}Dog.‸\n`).sort(), ["count", "new"])
+    check("completion: the class table offers its statics, `new` and the class it extends",
+        labels(`${CLASS}Dog.‸\n`).sort(), ["ParentClass", "count", "new"])
     contains("completion: `new` offers the classes in scope", labels(`${CLASS}const z = new ‸\n`), "Dog")
     check("completion: `this` is the instance being written", labels([
         "class A",
@@ -1104,7 +1104,7 @@ print(later)
         "        this.‸",
         "    end",
         "end",
-    ].join("\n")).sort(), ["m", "x"])
+    ].join("\n")).sort(), ["ClassObject", "m", "x"])
 
     // A class is shown the way it is written, not as a `declare class`.
     {
@@ -1142,6 +1142,56 @@ print(later)
     {
         const { document } = open(CLASS)
         check("diagnostics: a plain class reports nothing", diagnostics(analyzer.get(document)).map(d => d.message), [])
+    }
+
+    // A generic class: the arguments reach hover and completion.
+    {
+        const BOX = [
+            "class Box<T>",
+            "    value: T",
+            "    constructor(value: T)",
+            "        this.value = value",
+            "    end",
+            "    function get(): T",
+            "        return this.value",
+            "    end",
+            "end",
+            "",
+        ].join("\n")
+        const { document, cursor } = open(`${BOX}const n‸ = new Box("a")\n`)
+        check("hover: a generic class is shown at the argument it was made with",
+            (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
+            "```luaut-hover\nconst n: Box<string>\n```")
+        const got = open(`${BOX}const n = new Box(1)\nconst g‸ot = n:get()\n`)
+        check("hover: a generic class's method answers at that argument",
+            (hover(analyzer.get(got.document), got.cursor)?.contents as { value: string }).value,
+            "```luaut-hover\nconst got: number\n```")
+        const annotated = open(`${BOX}const which: Box<number> = new Box(1)\nconst wrong: Box<number> = new Box("a")\n`)
+        check("diagnostics: a generic class is not another instantiation of itself",
+            diagnostics(analyzer.get(annotated.document)).map(d => d.message),
+            ["Type 'Box<string>' is not assignable to 'Box<number>'"])
+    }
+
+    // A class written as a value takes the name it is bound to.
+    {
+        const source = [
+            "const Counter = class",
+            "    n = 0",
+            "    function bump(): number",
+            "        this.n += 1",
+            "        return this.n",
+            "    end",
+            "end",
+            "const c = new Counter()",
+            "",
+        ].join("\n")
+        const { document } = open(source)
+        check("diagnostics: a class written as a value reports nothing",
+            diagnostics(analyzer.get(document)).map(d => d.message), [])
+        const opened = open(source.replace("const c =", "const c‸ ="))
+        check("hover: a class written as a value is known by the name it is bound to",
+            (hover(analyzer.get(opened.document), opened.cursor)?.contents as { value: string }).value,
+            "```luaut-hover\nconst c: Counter\n```")
     }
 }
 
