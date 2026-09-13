@@ -90,7 +90,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         "```luaut-hover\n(parameter) xs: number[]\n```")
     check("hover: a function name",
         hoverText(`function first‸Two(xs: number[]): number\n    return 1\nend\n`),
-        "```luaut-hover\nfunction firstTwo(xs: number[]) -> number\n```")
+        "```luaut-hover\nfunction firstTwo(xs: number[]) => number\n```")
     check("hover: nothing on an operator", hoverText(`declare a: boolean\ndeclare b: number\nconst c = a a‸nd b\n`), undefined)
     check("hover: nothing on a parenthesis", hoverText(`print( ‸ 1)\n`), undefined)
     check("hover: an operand still has its own", hoverText(`declare a: boolean\ndeclare b: number\nconst c = ‸a and b\n`),
@@ -117,14 +117,14 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("hover: a declared value",
         hoverText(`declare fo‸o: { bar: number }\n`), "declare foo: { bar: number }")
     check("hover: a declared function",
-        hoverText(`declare function gre‸et(name: string): nil\n`), "declare function greet(name: string) -> nil")
+        hoverText(`declare function gre‸et(name: string): nil\n`), "declare function greet(name: string) => nil")
     check("hover: an overloaded declaration shows its own signature",
         hoverText(`declare function f(x: string): string\ndeclare function ‸f(x: number): number\n`),
-        "declare function f(x: number) -> number  (+1 overload)")
+        "declare function f(x: number) => number  (+1 overload)")
     check("hover: a mapped type's key",
         hoverText(`type M<T> = { [‸K in keyof T]: T[K] }\n`)?.startsWith("(type parameter) K in "), true)
-    check("hover: an infer name", hoverText(`type R<T> = T extends () -> infer ‸U ? U : never\n`), "(type parameter) infer U")
-    check("hover: a use of an infer name", hoverText(`type R<T> = T extends () -> infer U ? ‸U : never\n`), "(type parameter) infer U")
+    check("hover: an infer name", hoverText(`type R<T> = T extends () => infer ‸U ? U : never\n`), "(type parameter) infer U")
+    check("hover: a use of an infer name", hoverText(`type R<T> = T extends () => infer U ? ‸U : never\n`), "(type parameter) infer U")
     check("hover: a type query resolves to the value's type",
         hoverText(`const d = { v: 1 }\nconst c: typ‸eof d = { v: 2 }\n`), "{ v: number }")
     check("hover: a type literal property",
@@ -134,7 +134,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("hover: a property name is not confused with a same-named type",
         hoverText(`type bar = string\ndeclare foo: { bar: ba‸r }\n`), "type bar = string")
     check("hover: a parameter in a function type",
-        hoverText(`declare foo: (co‸unt: number) -> string\n`), "(parameter) count: number")
+        hoverText(`declare foo: (co‸unt: number) => string\n`), "(parameter) count: number")
     check("hover: a primitive type", hoverText(`const n: numb‸er = 1\n`), "type number")
     check("hover: an alias by reference",
         hoverText(`type Shape = { r: number }\nconst s: Sha‸pe = { r: 1 }\n`), "type Shape = { r: number }")
@@ -144,7 +144,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("hover: a generic parameter",
         hoverText(`type Box<T extends string> = { value: ‸T }\n`), "(type parameter) T extends string")
     check("hover: a long object type goes one member per line",
-        hoverText(`print(ma‸th)\n`)?.startsWith("math: {\n    floor: (x: number) -> number,"), true)
+        hoverText(`print(ma‸th)\n`)?.startsWith("math: {\n    floor: (x: number) => number,"), true)
 }
 
 // --- semantic tokens ---------------------------------------------------
@@ -170,7 +170,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         return out
     }
 
-    const conditional = tokensOf(`type Ret<T> = T extends (...unknown) -> infer R ? R : never\n`)
+    const conditional = tokensOf(`type Ret<T> = T extends (...unknown) => infer R ? R : never\n`)
     contains("semantic: `extends` in a conditional is a keyword", conditional, "extends:keyword")
     contains("semantic: `type` declaring an alias is a keyword", conditional, "type:keyword")
     contains("semantic: the alias name", conditional, "Ret:type.declaration")
@@ -191,7 +191,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("semantic: the queried value is a variable", declared, "d:variable.readonly")
     contains("semantic: a const declaration", declared, "c:variable.declaration.readonly")
 
-    const literal = tokensOf(`declare foo: { readonly bar: number, run: (x: number) -> nil }\n`)
+    const literal = tokensOf(`declare foo: { readonly bar: number, run: (x: number) => nil }\n`)
     contains("semantic: a readonly property in a type", literal, "bar:property.declaration.readonly")
     contains("semantic: a function-typed property is a method", literal, "run:method.declaration")
 
@@ -201,7 +201,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("semantic: reserved words are left to the grammar",
         defaults.some(t => t.startsWith("const:") || t.startsWith("export:")), false)
 
-    const classes = tokensOf(`declare class Dog extends Instance { Bark: (self: Dog) -> () }\nconst d: Dog = nil as any\nconst p: Vector3 = Vector3.new()\n`)
+    const classes = tokensOf(`declare class Dog extends Instance { Bark: (self: Dog) => () }\nconst d: Dog = nil as any\nconst p: Vector3 = Vector3.new()\n`)
     contains("semantic: `class` in a declaration is a keyword", classes, "class:keyword")
     contains("semantic: the class name", classes, "Dog:class.declaration")
     contains("semantic: a superclass", classes, "Instance:class")
@@ -225,8 +225,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         hoverText(`const s: ReplicatedSto‸rage = game:GetService("ReplicatedStorage")\n`),
         "declare class ReplicatedStorage extends Instance {}")
     check("classes: hovering a declaration",
-        hoverText(`declare class Do‸g extends Instance { Bark: (self: Dog) -> () }\n`),
-        "declare class Dog extends Instance {\n    Bark: (self: Dog) -> (),\n}")
+        hoverText(`declare class Do‸g extends Instance { Bark: (self: Dog) => () }\n`),
+        "declare class Dog extends Instance {\n    Bark: (self: Dog) => (),\n}")
     const diagnosticsOf = (src: string): string[] => diagnostics(analyzer.get(open(src).document)).map(d => d.message)
     check("classes: a table is not an Instance, and a sibling class is not either",
         diagnosticsOf(`const a: Instance = { Name: "x" }\nconst b: Part = game:GetService("Players")\n`),
@@ -268,7 +268,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const xs = [1, 2]\nxs.‸\n`), [])
     check("completion: `..` is concatenation, not member access",
         labelsAt(`const alpha = 1\nprint("a" ..‸)\n`).includes("alpha"), true)
-    const maybe = `type Part = { Name: string, Destroy: (self: Part) -> () }\ndeclare part: Part | nil\n`
+    const maybe = `type Part = { Name: string, Destroy: (self: Part) => () }\ndeclare part: Part | nil\n`
     check("completion: `?.` offers the members of the non-nil type",
         labelsAt(`${maybe}part?.‸\n`).sort(), ["Destroy", "Name"])
     check("completion: `?:` offers its methods",
@@ -384,7 +384,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     }
     const names = `type Names = "GTFrisk" | "XTFrisk"\n`
     check("completion: the keys a finite index signature covers",
-        labelsAt(`${names}const perClass = {\n    ‸\n} as const satisfies { [Names]: () -> () }\n`).sort(),
+        labelsAt(`${names}const perClass = {\n    ‸\n} as const satisfies { [Names]: () => () }\n`).sort(),
         ["GTFrisk", "XTFrisk"])
     // `[string]` names no key in particular, so nothing replaces the ordinary
     // suggestions there.
@@ -412,9 +412,9 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         hoverText(overloads.replace(`function f(x: "b")`, `function ‸f(x: "b")`)),
         hoverText(overloads.replace("function f(x)", "function ‸f(x)")),
     ], [
-        `function f(x: "a") -> number`,
-        `function f(x: "b") -> string`,
-        `function f: ((x: "a") -> number) & ((x: "b") -> string)`,
+        `function f(x: "a") => number`,
+        `function f(x: "b") => string`,
+        `function f: ((x: "a") => number) & ((x: "b") => string)`,
     ])
 
     const { document } = open(overloads)
@@ -601,7 +601,7 @@ print(later)
         const { document, cursor } = file("main.luaut",
             `import origin, { ORIGIN, distance, Point } from "./shared/shapes"\nconst p: Point = { x: 1, y: 2 }\nprint(dist‸ance(p, ORIGIN), origin)\n`)
         check("modules: an imported function has its real type, not any",
-            hoverText(document, cursor)?.includes("-> number"), true)
+            hoverText(document, cursor)?.includes("=> number"), true)
         check("modules: a valid import has no diagnostics", diagnostics(modules.get(document)).map(d => d.message), [])
     }
     {
@@ -991,7 +991,7 @@ print(later)
         `function add(a: number, b: string): number\n    return a\nend\nadd(1, ‸)\n`,
     )
     const help = signatureHelp(analyzer, document, cursor)
-    check("signature help: label", help?.signatures[0]?.label, "(a: number, b: string) -> number")
+    check("signature help: label", help?.signatures[0]?.label, "(a: number, b: string) => number")
     check("signature help: active parameter", help?.activeParameter, 1)
 }
 {
@@ -1111,13 +1111,13 @@ print(later)
         const { document, cursor } = open(CLASS.replace("class Dog", "class Do‸g"))
         check("hover: a class reads as it is written",
             (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nclass Dog extends Animal\n    breed: string\n    fetch: (this: Dog) -> boolean\nend\n```")
+            "```luaut-hover\nclass Dog extends Animal\n    breed: string\n    fetch: (this: Dog) => boolean\nend\n```")
     }
     {
         const { document, cursor } = open(`${CLASS}const y: An‸imal = d\n`)
         check("hover: naming a class in a type shows the class",
             (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nclass Animal\n    name: string\n    speak: (this: Animal) -> string\n    readonly label: string\nend\n```")
+            "```luaut-hover\nclass Animal\n    name: string\n    speak: (this: Animal) => string\n    readonly label: string\nend\n```")
     }
 
     // The outline lists a class and what is in it.
@@ -1221,7 +1221,7 @@ print(later)
         levels("type P = { x: number }\nconst q‸: P = { x: 1 }\n"),
         ["const q: P", "const q: { x: number }"])
     check("hover: an inferred one too",
-        levels("type P = { x: number }\ndeclare make: () -> P\nconst q‸ = make()\n"),
+        levels("type P = { x: number }\ndeclare make: () => P\nconst q‸ = make()\n"),
         ["const q: P", "const q: { x: number }"])
 
     // One level at a time: the names inside wait their turn.
