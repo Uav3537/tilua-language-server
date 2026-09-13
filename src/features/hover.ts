@@ -12,20 +12,58 @@ import {
     type Binding, type Expression, type Identifier, type Type, type TypeNode,
 } from "luaut-parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
-import { pathAt, toRange, type Spanned } from "../ast-utils.js"
+import { isSpanned, pathAt, toRange, type Spanned } from "../ast-utils.js"
+import { expandAliases } from "./expand.js"
 import { signaturesOf } from "./members.js"
 
-export function hover(analysis: Analysis, position: Position): Hover | null {
+/** A hover that knows whether there is more to say. `depth` 0 is the
+ *  shortest true answer — names left as names — and each level replaces the
+ *  names standing one step further in. */
+export interface DetailedHover extends Hover {
+    depth: number
+    /** Is there a level past this one that says something different? */
+    canExpand: boolean
+}
+
+export function hover(analysis: Analysis, position: Position, depth = 0): DetailedHover | null {
     const path = pathAt(analysis.program, position, true)
     for (let i = path.length - 1; i >= 0; i--) {
         // On an operator, a parenthesis or a dot the cursor is on no name:
         // nothing to say, as in TypeScript — not the type of the whole
         // expression around it.
         if (UNNAMED.has(path[i].type as string)) return null
-        const text = describe(analysis, path, i)
-        if (text) return { contents: { kind: "markdown", value: code(text) }, range: toRange(path[i]) }
+        const text = at(analysis, path, i, depth)
+        if (!text) continue
+        // Whether one more level would say anything is only knowable by
+        // asking for it: an alias that stands for a primitive is already as
+        // short as it gets, and so is the level after the last name.
+        const canExpand = at(analysis, path, i, depth + 1) !== text
+        return {
+            contents: { kind: "markdown", value: code(text) },
+            range: toRange(path[i]),
+            depth,
+            canExpand,
+        }
     }
     return null
+}
+
+/** One reading of the node at `index`, with aliases opened `depth` levels. */
+function at(analysis: Analysis, path: readonly Spanned[], index: number, depth: number): string | undefined {
+    const previous = expansion
+    expansion = { depth, aliases: analysis.types.aliases, source: analysis.source }
+    try {
+        return describe(analysis, path, index)
+    } finally {
+        expansion = previous
+    }
+}
+
+/** How far `pretty` opens the names it prints, for the hover being built.
+ *  Building one is a single synchronous pass, so this is that pass's setting
+ *  rather than a parameter threaded through every branch of `describe`. */
+let expansion: { depth: number; aliases: ReadonlyMap<string, Type>; source: string } = {
+    depth: 0, aliases: new Map(), source: "",
 }
 
 /** Expressions made of other expressions plus operators or punctuation. The
@@ -180,7 +218,7 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
         case "TypedIdentifier": {
             const binding = bindingOfNode(analysis, node)
             const type = binding && types.bindingType.get(binding.id)
-            return type ? bindingText(binding, type) : undefined
+            return type ? bindingText(binding, type, asWritten(node.typeAnnotation)) : undefined
         }
 
         // A type written by name: `number`, `Shape`, `Partial<User>`, or a type
@@ -333,7 +371,38 @@ function fieldWithKey(table: AnyNode, key: AnyNode): { value: Expression } | und
 
 /** Long object types one member per line, overload sets one signature per
  *  line — `math` on a single line is thousands of characters. */
-function pretty(type: Type): string {
+/** How a type reads at the level being shown. `written` is the annotation it
+ *  was given, which is the shortest true answer when there is one: `const b:
+ *  Shape` says `Shape` because that is what the line says. */
+function pretty(type: Type, written?: string): string {
+    const named = render(expandAliases(type, expansion.aliases, 0))
+    // The annotation is only a level of its own when it says *less* than the
+    // type does with nothing opened: `A` for a `number`. Where the type keeps
+    // the name anyway (`Shape`), the two are the same reading.
+    const shorthand = written !== undefined && written !== named ? written : undefined
+    const depth = shorthand === undefined ? expansion.depth : expansion.depth - 1
+    if (depth < 0) return shorthand!
+    return depth === 0 ? named : render(expandAliases(type, expansion.aliases, depth))
+}
+
+/** The annotation as it is written, with its line breaks folded away. */
+function asWritten(node: unknown): string | undefined {
+    if (!isSpanned(node) || !expansion.source) return undefined
+    const lines = expansion.source.split(/\r?\n/)
+    const { line, column } = node
+    if (line.start < 1 || line.end > lines.length) return undefined
+    const text = line.start === line.end
+        ? lines[line.start - 1].slice(column.start - 1, column.end - 1)
+        : [
+            lines[line.start - 1].slice(column.start - 1),
+            ...lines.slice(line.start, line.end - 1),
+            lines[line.end - 1].slice(0, column.end - 1),
+        ].join(" ")
+    const folded = text.trim().replace(/\s+/g, " ")
+    return folded.length ? folded : undefined
+}
+
+function render(type: Type): string {
     const flat = formatType(type)
     if (flat.length <= 80) return flat
     if (type.kind === "object") {
@@ -352,11 +421,11 @@ function pretty(type: Type): string {
 }
 
 /** `const x: number`, `function f(a: string) -> number`, `(import) util: {...}`. */
-function bindingText(binding: Binding, type: Type): string {
+function bindingText(binding: Binding, type: Type, written?: string): string {
     if (binding.declaredBy === "function" && type.kind === "function") {
-        return `function ${binding.name}${formatType(type)}`
+        return `function ${binding.name}${pretty(type)}`
     }
-    return `${keyword(binding)} ${binding.name}: ${pretty(type)}`
+    return `${keyword(binding)} ${binding.name}: ${pretty(type, written)}`
 }
 
 function keyword(binding: Binding): string {

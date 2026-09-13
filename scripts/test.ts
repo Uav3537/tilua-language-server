@@ -1195,6 +1195,74 @@ print(later)
     }
 }
 
+// --- hover, a level at a time ------------------------------------------
+{
+    /** Every reading of the type under the cursor, shortest first. */
+    const levels = (source: string): string[] => {
+        const { document, cursor } = open(source)
+        const out: string[] = []
+        for (let depth = 0; depth < 6; depth++) {
+            const answer = hover(analyzer.get(document), cursor, depth)
+            if (!answer) break
+            out.push((answer.contents as { value: string }).value.replace(/```luaut-hover\n|\n```/g, ""))
+            if (!answer.canExpand) break
+        }
+        return out
+    }
+
+    // The example everything else follows: an alias for a primitive is shown
+    // as the alias, and opens to what it stands for.
+    check("hover: an alias opens to what it stands for",
+        levels("type A = number\nconst B‸: A = 1\n"), ["const B: A", "const B: number"])
+
+    // An object keeps its name whether or not it was annotated, so both read
+    // the same way and open the same way.
+    check("hover: an object alias opens to its members",
+        levels("type P = { x: number }\nconst q‸: P = { x: 1 }\n"),
+        ["const q: P", "const q: { x: number }"])
+    check("hover: an inferred one too",
+        levels("type P = { x: number }\ndeclare make: () -> P\nconst q‸ = make()\n"),
+        ["const q: P", "const q: { x: number }"])
+
+    // One level at a time: the names inside wait their turn.
+    check("hover: the names inside open on the next level", levels([
+        "type Inner = { n: number }",
+        "type Outer = { i: Inner, name: string }",
+        `const o‸: Outer = { i: { n: 1 }, name: "a" }`,
+        "",
+    ].join("\n")), [
+        "const o: Outer",
+        "const o: { i: Inner, name: string }",
+        "const o: { i: { n: number }, name: string }",
+    ])
+
+    check("hover: an alias inside an array opens with it",
+        levels("type Inner = { n: number }\ndeclare xs: Inner[]\nconst a‸ = xs\n"),
+        ["const a: Inner[]", "const a: { n: number }[]"])
+
+    // A class is what it is called, not a shorthand for its shape.
+    check("hover: a class stays its name",
+        levels("declare class Part { Size: number }\ndeclare p: Part\nconst q‸ = p\n"), ["const q: Part"])
+
+    // A type that names itself stops rather than unrolling.
+    check("hover: a type that names itself opens once",
+        levels("type Node = { next: Node | nil, n: number }\ndeclare head: Node\nconst h‸ = head\n"),
+        ["const h: Node", "const h: { n: number, next: Node | nil }"])
+
+    check("hover: nothing to open is nothing to offer", levels("const n‸ = 1\n"), ["const n: 1"])
+
+    // A branded type is an intersection, and reads as one.
+    check("hover: a branded type opens to the brand", levels([
+        `type UserId = string & { readonly __brand: "UserId" }`,
+        "declare u: UserId",
+        "const v‸ = u",
+        "",
+    ].join("\n")), [
+        "const v: UserId",
+        `const v: string & { readonly __brand: "UserId" }`,
+    ])
+}
+
 for (const failure of failures) console.log(`FAIL ${failure}`)
 console.log(`\n${passed} passed, ${failures.length} failed`)
 process.exit(failures.length ? 1 : 0)

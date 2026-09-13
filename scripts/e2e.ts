@@ -99,6 +99,28 @@ const hovered = await request("textDocument/hover", {
 // declaration itself.
 check("hover over the binding", hovered.result?.contents?.value, "```luaut-hover\npart: Part\n```")
 
+// The same hover, a level at a time. An editor that offers to say more asks
+// here; `textDocument/hover` above is the shortest reading for every other.
+notify("textDocument/didOpen", {
+    textDocument: {
+        uri: `${uri}#levels`, languageId: "luaut", version: 1,
+        text: "type Size = { width: number }\nconst box: Size = { width: 1 }\n",
+    },
+})
+const shortest = await request("luaut/hover", {
+    textDocument: { uri: `${uri}#levels` },
+    position: { line: 1, character: 7 },
+})
+check("verbose hover: opens with the name", [shortest.result?.contents?.value, shortest.result?.canExpand],
+    ["```luaut-hover\nconst box: Size\n```", true])
+const opened = await request("luaut/hover", {
+    textDocument: { uri: `${uri}#levels` },
+    position: { line: 1, character: 7 },
+    depth: 1,
+})
+check("verbose hover: says more when asked", [opened.result?.contents?.value, opened.result?.canExpand],
+    ["```luaut-hover\nconst box: { width: number }\n```", false])
+
 const completed = await request("textDocument/completion", {
     textDocument: { uri },
     position: { line: 2, character: 11 },

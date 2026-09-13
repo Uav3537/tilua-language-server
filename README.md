@@ -18,6 +18,7 @@ luaut-language-server --stdio
 |---|---|
 | `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke. A name nothing declares is an error ("Cannot find name 'x'") whenever type libraries are loaded. `--@luaut-nocheck`, `--@luaut-ignore` and `--@luaut-expect-error` silence scope and type errors |
 | `hover` | the type as luaut writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil`. Also every name in a type or definitions file: `declare` names (with their overload count), classes (`declare class Part extends BasePart { ...what it adds }`), alias names, object-type properties, type parameters, `infer` names, and any type annotation, which reads as what it resolves to |
+| `luaut/hover` | the same hover, at a level the editor asks for (`depth`), and whether there is another (`canExpand`). Level 0 is the shortest true reading — names left as names — and each one opens the names standing a step further in: `const b: Shape`, then `{ kind: "circle", size: number }`, then whatever those are named after. A class stays its name, and a type that names itself opens once. LSP has no way to ask for this, so every other editor gets level 0 through `hover` |
 | `semanticTokens` | colours from the parser, not from patterns — see [Highlighting](#highlighting) |
 | `definition` | the binding's declaration — and from an `import`, the export in the other module |
 | `references`, `documentHighlight` | every use of the binding |
@@ -90,6 +91,14 @@ parameters, and soft keywords only where the AST did not claim the word as a
 name. The grammar in the editor extension keeps just what characters decide
 alone — comments, strings, numbers, reserved words — so a file looks right
 before the server answers, and never disagrees with it after.
+
+### Saying more
+
+A hover opens with the shortest thing that is true and says more when asked,
+as TypeScript's does. The server answers `luaut/hover` at whatever level it is
+given; how the editor offers the next one is the editor's business. The VS
+Code extension puts a link under the type, because the hover API that would
+draw the buttons is still a proposed one.
 
 ## Not yet
 

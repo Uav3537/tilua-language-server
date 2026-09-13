@@ -7,7 +7,7 @@
  */
 import {
     createConnection, DiagnosticSeverity, ProposedFeatures, TextDocuments, TextDocumentSyncKind,
-    type Connection, type Diagnostic, type InitializeParams, type InitializeResult,
+    type Connection, type Diagnostic, type InitializeParams, type InitializeResult, type Position,
 } from "vscode-languageserver/node"
 import { TextDocument } from "vscode-languageserver-textdocument"
 import type { ConfigProblem } from "luaut-parser"
@@ -151,6 +151,17 @@ export function createServer(connection: Connection, options: ServerOptions = {}
 
     connection.onHover(p => withDocument(
         p.textDocument.uri, d => hover(analyzer.get(d), p.position), null,
+    ))
+
+    // The same hover, at a level the editor asks for. LSP has no way to say
+    // "and now tell me more", so an editor that offers that asks here; every
+    // other one gets the shortest reading through `onHover` above.
+    connection.onRequest("luaut/hover", (p: {
+        textDocument: { uri: string }
+        position: Position
+        depth?: number
+    }) => withDocument(
+        p.textDocument.uri, d => hover(analyzer.get(d), p.position, Math.max(0, p.depth ?? 0)), null,
     ))
 
     connection.onDefinition(p => withDocument(
