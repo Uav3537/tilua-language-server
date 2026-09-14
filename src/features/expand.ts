@@ -11,7 +11,10 @@
  * the exception — it is nominal, its members name it back, and `Part` is what
  * it is called rather than a shorthand for its shape.
  */
-import { isClassType, arrayOf, tuple, objectType, fn, union, intersection, type Type } from "luaut-parser"
+import {
+    isClassType, arrayOf, tuple, objectType, fn, union, intersection,
+    aliasNameOf, withoutAliasName, type Type,
+} from "luaut-parser"
 
 /** `type`, with the names standing one step in replaced by what they stand
  *  for, `depth` times over. `seen` holds the names already opened along this
@@ -32,22 +35,17 @@ export function expandAliases(
     return children(type, t => expandAliases(t, aliases, depth, seen))
 }
 
-/** The name a type is printed as instead of its structure, if it has one. */
+/** The name a type is printed as instead of its structure, if it has one.
+ *  The parser keeps it for every kind an alias can stand for — `type Id =
+ *  number` included — so a level opens one name, not every name beneath it. */
 function withheldName(type: Type): string | undefined {
-    if (isClassType(type)) return undefined
-    if (type.kind === "object" || type.kind === "intersection") return type.name
     if (type.kind === "genericRef") return type.typeArguments.length ? undefined : type.name
-    return undefined
+    return aliasNameOf(type)
 }
 
 /** The same type, printed as what it is made of. */
 function unnamed(type: Type): Type {
-    if (type.kind === "object") {
-        const out = objectType(type.properties, type.indexer, type.frozen)
-        return type.class ? Object.assign(out, { class: type.class, name: type.name }) : out
-    }
-    if (type.kind === "intersection" && type.name) return { ...type, name: undefined }
-    return type
+    return withoutAliasName(type)
 }
 
 /** `type` with `f` applied to each type inside it. Only the kinds a hover

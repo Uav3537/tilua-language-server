@@ -1,6 +1,6 @@
 {
   "name": "luaut-language-server",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "description": "Language server for luaut (LSP), built on luaut-parser",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -41,7 +41,7 @@
     "typescript": "^5.0.4"
   },
   "dependencies": {
-    "luaut-parser": "^5.0.0",
+    "luaut-parser": "^5.2.0",
     "vscode-languageserver": "^10.1.1",
     "vscode-languageserver-textdocument": "^1.0.14"
   },
