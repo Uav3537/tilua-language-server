@@ -1,7 +1,7 @@
 {
-  "name": "luaut-language-server",
-  "version": "5.1.0",
-  "description": "Language server for luaut (LSP), built on luaut-parser",
+  "name": "@tilua/language-server",
+  "version": "1.0.0",
+  "description": "Language server for tilua (LSP), built on @tilua/parser",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -25,6 +25,7 @@
     "test": "tsx scripts/test.ts && npm run build && tsx scripts/e2e.ts",
     "test:unit": "tsx scripts/test.ts",
     "test:e2e": "tsx scripts/e2e.ts",
+    "bench": "tsx scripts/bench.ts",
     "build": "tsup",
     "typecheck": "tsc --noEmit"
   },
@@ -33,23 +34,26 @@
   "license": "ISC",
   "type": "module",
   "devDependencies": {
-    "@luaut/lua": "^3.0.0",
-    "@luaut/roblox": "^4.0.0",
+    "@tilua-types/lua": "^1.0.0",
+    "@tilua-types/roblox": "^1.0.0",
     "@types/node": "^22.20.2",
     "tsup": "^8.5.1",
     "tsx": "^4.23.13",
     "typescript": "^5.0.4"
   },
   "dependencies": {
-    "luaut-parser": "^5.2.0",
+    "@tilua/parser": "^1.0.0",
     "vscode-languageserver": "^10.1.1",
     "vscode-languageserver-textdocument": "^1.0.14"
   },
   "bin": {
-    "luaut-language-server": "dist/cli.js"
+    "tilua-language-server": "dist/cli.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Uav3537/luaut-language-server.git"
+    "url": "git+https://github.com/Uav3537/tilua-language-server.git"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

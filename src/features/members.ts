@@ -1,5 +1,5 @@
 /** What members a type has — shared by completion and signature help. */
-import { formatType, substitute, union, type FunctionType, type ObjectProperty, type Type } from "luaut-parser"
+import { formatType, substitute, union, type FunctionType, type ObjectProperty, type Type } from "@tilua/parser"
 
 export interface Member {
     name: string

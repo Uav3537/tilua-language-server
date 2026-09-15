@@ -1,5 +1,5 @@
 /**
- * Hover: what the thing under the cursor is, as luaut would write it.
+ * Hover: what the thing under the cursor is, as tilua would write it.
  *
  * Every answer comes from the parser's own tables — binding types, the type of
  * each expression, the resolved type of each type annotation — and every name
@@ -10,7 +10,7 @@ import type { Hover, Position } from "vscode-languageserver"
 import {
     formatType, isClassType,
     type Binding, type Expression, type Identifier, type Type, type TypeNode,
-} from "luaut-parser"
+} from "@tilua/parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
 import { isSpanned, pathAt, toRange, type Spanned } from "../ast-utils.js"
 import { expandAliases } from "./expand.js"
@@ -440,8 +440,8 @@ function keyword(binding: Binding): string {
 
 function code(text: string): string {
     // Its own grammar: VS Code colours a hover's code block with TextMate
-    // only, and the editor's luaut grammar deliberately leaves names and
+    // only, and the editor's tilua grammar deliberately leaves names and
     // types to semantic tokens. Hover text is output this server formats,
     // so a grammar for that format is exact rather than a guess.
-    return "```luaut-hover\n" + text + "\n```"
+    return "```tilua-hover\n" + text + "\n```"
 }

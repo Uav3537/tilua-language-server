@@ -16,7 +16,7 @@ import type { TextDocument } from "vscode-languageserver-textdocument"
 import {
     formatType,
     type BindingTarget, type ExportAllStatement, type ExportNamedStatement, type Identifier, type ImportStatement,
-} from "luaut-parser"
+} from "@tilua/parser"
 import { bindingOfNode, pathOfUri, samePath, uriOfPath, type Analysis, type Analyzer } from "../analysis.js"
 import { pathAt, toRange, type Spanned } from "../ast-utils.js"
 import { signaturesOf } from "./members.js"
@@ -106,7 +106,7 @@ function pathItems(analyzer: Analyzer, fromUri: string, position: Position, type
     return [...items.values()]
 }
 
-/** The luaut files and folders in `directory`, as import path completions. */
+/** The tilua files and folders in `directory`, as import path completions. */
 function entryItems(directory: string, range: Range, from: string): CompletionItem[] {
     let entries
     try {
@@ -125,10 +125,10 @@ function entryItems(directory: string, range: Range, from: string): CompletionIt
                 textEdit: { range, newText: `${entry.name}/` },
                 command: SUGGEST_AGAIN,
             })
-        } else if (entry.name.endsWith(".luaut")) {
+        } else if (entry.name.endsWith(".tilua")) {
             // A file does not import itself.
             if (samePath(resolve(directory, entry.name), from)) continue
-            const name = entry.name.replace(/(\.d)?\.luaut$/, "")
+            const name = entry.name.replace(/(\.d)?\.tilua$/, "")
             items.push({
                 label: name,
                 kind: CompletionItemKind.File,

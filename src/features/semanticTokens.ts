@@ -1,7 +1,7 @@
 /**
  * Semantic highlighting, from the parser rather than from patterns.
  *
- * A TextMate grammar only sees characters, and in luaut a word's role depends
+ * A TextMate grammar only sees characters, and in tilua a word's role depends
  * on where it stands: `extends` is a keyword inside a type and a plain name
  * elsewhere, `type Foo = ...` declares an alias while `type(x)` calls a
  * builtin, and `typeof x` in a type is a query while `typeof(v)` in code is a
@@ -13,7 +13,7 @@
  * reserved words — so the file looks right before the server answers.
  */
 import type { SemanticTokens, SemanticTokensLegend } from "vscode-languageserver"
-import { tokenize, isClassType, unknownType, type Binding, type Expression, type Identifier, type Token, type Type, type TypeNode } from "luaut-parser"
+import { tokenize, isClassType, unknownType, type Binding, type Expression, type Identifier, type Token, type Type, type TypeNode } from "@tilua/parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
 import { children, type Spanned } from "../ast-utils.js"
 import { signaturesOf } from "./members.js"
@@ -167,6 +167,20 @@ function classify(
     }
 }
 
+/** How wide a name is *as written*. A quoted key — `{ "key": number }` — is
+ *  one `Identifier` whose span takes in the quotes while its `name` does not,
+ *  so colouring `name.length` characters from the span's start stopped two
+ *  short and left `y"` to the grammar, which painted it as the string it looks
+ *  like. Measure the span instead, and fall back to the name for a node that
+ *  spans more than its own line. */
+function writtenLength(node: AnyNode, name: string): number {
+    const line = node.line as { start: number; end: number } | undefined
+    const column = node.column as { start: number; end: number } | undefined
+    if (!line || !column || line.start !== line.end) return name.length
+    const width = column.end - column.start
+    return width > 0 ? width : name.length
+}
+
 function wordOf(token: Token): string | undefined {
     const value = (token as { value?: unknown }).value
     return typeof value === "string" ? value : undefined
@@ -174,7 +188,8 @@ function wordOf(token: Token): string | undefined {
 
 function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefined, add: Add): void {
     const name = (node as unknown as Identifier).name
-    const as = (type: TokenType, modifiers: readonly TokenModifier[] = []): void => add(node, name.length, type, modifiers)
+    const as = (type: TokenType, modifiers: readonly TokenModifier[] = []): void =>
+        add(node, writtenLength(node, name), type, modifiers)
     const typeOfNode = (n: unknown): Type | undefined => analysis.types.typeOfTypeNode.get(n as TypeNode)
 
     switch (parent?.type) {

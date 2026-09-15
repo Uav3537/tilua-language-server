@@ -19,13 +19,13 @@ import { semanticTokens } from "../src/features/semanticTokens.js"
 import type { Position } from "vscode-languageserver"
 
 import { readFileSync } from "node:fs"
-import { parse } from "luaut-parser"
+import { parse } from "@tilua/parser"
 
 // The parser has no types built in. These tests analyze against the Lua and
 // Roblox libraries, as a project whose config lists them would — in that
 // order, since Roblox's adds to Lua's.
 const testLibs = ["lua", "roblox"].map(name =>
-    parse(readFileSync(new URL(`../node_modules/@luaut/${name}/index.d.luaut`, import.meta.url), "utf8")))
+    parse(readFileSync(new URL(`../node_modules/@tilua-types/${name}/index.d.tilua`, import.meta.url), "utf8")))
 const analyzer = new Analyzer({ libs: testLibs })
 let passed = 0
 const failures: string[] = []
@@ -36,7 +36,7 @@ function open(source: string): { document: TextDocument; cursor: Position } {
     // Not `|`: that is the union operator, and it turns up in the fixtures.
     const index = source.indexOf("‸")
     const text = index < 0 ? source : source.slice(0, index) + source.slice(index + 1)
-    const document = TextDocument.create(`file:///test${documentCount++}.luaut`, "luaut", 1, text)
+    const document = TextDocument.create(`file:///test${documentCount++}.tilua`, "tilua", 1, text)
     return { document, cursor: index < 0 ? { line: 0, character: 0 } : document.positionAt(index) }
 }
 
@@ -57,7 +57,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const { document, cursor } = open(`const answer = 42\nprint(ans‸wer)\n`)
     const result = hover(analyzer.get(document), cursor)
     check("hover: const keeps its literal type", (result?.contents as { value: string }).value,
-        "```luaut-hover\nanswer: 42\n```")
+        "```tilua-hover\nanswer: 42\n```")
 }
 {
     const { document, cursor } = open(
@@ -65,13 +65,13 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     )
     const result = hover(analyzer.get(document), cursor)
     check("hover: shows the narrowed type", (result?.contents as { value: string }).value,
-        "```luaut-hover\nv: string\n```")
+        "```tilua-hover\nv: string\n```")
 }
 {
     const { document, cursor } = open(`const part = Instance.new("Part")\nprint(part.Posi‸tion)\n`)
     const result = hover(analyzer.get(document), cursor)
     check("hover: property of a Roblox class", (result?.contents as { value: string }).value,
-        "```luaut-hover\nPosition: Vector3\n```")
+        "```tilua-hover\nPosition: Vector3\n```")
 }
 
 // Declarations, not just uses. Scope analysis indexes these separately, and
@@ -82,19 +82,19 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)?.value
     }
     check("hover: a const declaration", hoverText(`const nu‸ms = [1, 2]\nprint(nums)\n`),
-        "```luaut-hover\nconst nums: number[]\n```")
+        "```tilua-hover\nconst nums: number[]\n```")
     check("hover: a let declaration", hoverText(`let cou‸nt = 1\nprint(count)\n`),
-        "```luaut-hover\nlet count: number\n```")
+        "```tilua-hover\nlet count: number\n```")
     check("hover: a parameter",
         hoverText(`function f(x‸s: number[]): number {\n    return #xs\n}\n`),
-        "```luaut-hover\n(parameter) xs: number[]\n```")
+        "```tilua-hover\n(parameter) xs: number[]\n```")
     check("hover: a function name",
         hoverText(`function first‸Two(xs: number[]): number {\n    return 1\n}\n`),
-        "```luaut-hover\nfunction firstTwo(xs: number[]) => number\n```")
+        "```tilua-hover\nfunction firstTwo(xs: number[]) => number\n```")
     check("hover: nothing on an operator", hoverText(`declare a: boolean\ndeclare b: number\nconst c = a a‸nd b\n`), undefined)
     check("hover: nothing on a parenthesis", hoverText(`print( ‸ 1)\n`), undefined)
     check("hover: an operand still has its own", hoverText(`declare a: boolean\ndeclare b: number\nconst c = ‸a and b\n`),
-        "```luaut-hover\na: boolean\n```")
+        "```tilua-hover\na: boolean\n```")
 }
 {
     const { document, cursor } = open(`const tot‸al = 1\nprint(total)\n`)
@@ -110,7 +110,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const hoverText = (src: string): string | undefined => {
         const { document, cursor } = open(src)
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
-            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+            ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
     check("hover: an object literal key shows that property",
         hoverText(`const obj = { na‸me: "n", count: 2 }\nprint(obj)\n`), "(property) name: string")
@@ -143,8 +143,13 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("hover: a library type", hoverText(`const s: Servi‸ces = nil as any\n`)?.startsWith("type Services = "), true)
     check("hover: a generic parameter",
         hoverText(`type Box<T extends string> = { value: ‸T }\n`), "(type parameter) T extends string")
-    check("hover: a long object type goes one member per line",
-        hoverText(`print(ma‸th)\n`)?.startsWith("math: {\n    floor: (x: number) => number,"), true)
+    // Which member comes first is the library's business, not this test's.
+    check("hover: a long object type goes one member per line", (() => {
+        const lines = (hoverText(`print(ma‸th)\n`) ?? "").split("\n")
+        return lines[0] === "math: {"
+            && lines[1].startsWith("    ") && lines[1].trimEnd().endsWith(",")
+            && lines[2].startsWith("    ")
+    })(), true)
 }
 
 // --- semantic tokens ---------------------------------------------------
@@ -201,6 +206,14 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("semantic: reserved words are left to the grammar",
         defaults.some(t => t.startsWith("const:") || t.startsWith("export:")), false)
 
+    // A quoted key is one Identifier whose span takes in the quotes: colouring
+    // `name.length` characters stopped two short and left `y"` to the grammar,
+    // which painted the tail as the string it looks like.
+    const quoted = tokensOf(`type Keys = { "key": number, "my key": string, plain: boolean }\n`)
+    contains(`semantic: a quoted key is coloured over its quotes`, quoted, `"key":property.declaration`)
+    contains(`semantic: a quoted key with a space, too`, quoted, `"my key":property.declaration`)
+    contains(`semantic: an unquoted key is unchanged`, quoted, "plain:property.declaration")
+
     const classes = tokensOf(`declare class Dog extends Instance { Bark: (self: Dog) => () }\nconst d: Dog = nil as any\nconst p: Vector3 = Vector3.new()\n`)
     contains("semantic: `class` in a declaration is a keyword", classes, "class:keyword")
     contains("semantic: the class name", classes, "Dog:class.declaration")
@@ -213,7 +226,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const hoverText = (src: string): string | undefined => {
         const { document, cursor } = open(src)
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
-            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+            ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
     check("classes: typeof an Instance is \"Instance\"",
         hoverText(`const ReplicatedStorage = game:GetService("ReplicatedStorage")\nconst ty‸pe = typeof(ReplicatedStorage)\n`),
@@ -230,7 +243,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const diagnosticsOf = (src: string): string[] => diagnostics(analyzer.get(open(src).document)).map(d => d.message)
     check("classes: a table is not an Instance, and a sibling class is not either",
         diagnosticsOf(`const a: Instance = { Name: "x" }\nconst b: Part = game:GetService("Players")\n`),
-        ["Type '{ Name: string }' is not assignable to 'Instance'", "Type 'Players' is not assignable to 'Part'"])
+        ["Type '{ Name: string }' is not assignable to 'Instance', missing Changed, ClassName, GetPropertyChangedSignal and 47 more",
+            "Type 'Players' is not assignable to 'Part', missing GetPivot, PivotTo, Anchored and 72 more"])
     const { document, cursor } = open(`const part = Instance.new("Part")\npart.‸`)
     const labels = completion(analyzer, document, cursor).map(i => i.label)
     contains("classes: inherited members complete", labels, "Name")
@@ -397,7 +411,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const hoverText = (src: string): string | undefined => {
         const { document, cursor } = open(src)
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
-            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+            ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
     const ternary = `declare c: boolean\nconst a = 1\nconst b = 2\n`
     check("hover: the parts of `cond ? a : b`", [
@@ -436,7 +450,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const hoverText = (src: string): string | undefined => {
         const { document, cursor } = open(src)
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
-            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+            ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
     check("hover: a name inside an interpolation",
         hoverText(`const count = 3\nconst s = \`n = \${cou‸nt}\`\n`), "count: 3")
@@ -496,7 +510,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const hoverText = (src: string): string | undefined => {
         const { document, cursor } = open(src)
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
-            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+            ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
     check("hover: `...` is what the function declared it takes",
         hoverText(`function f(...: number) {\n    print(‸...)\n}\n`), "(vararg) ...: number")
@@ -511,7 +525,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const hoverText = (src: string): string | undefined => {
         const { document, cursor } = open(src)
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
-            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+            ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
     const t = `declare t: { RemoteMap: number, other: string, nested: { deep: number } }\n`
     check("hover: a shorthand key is the binding it declares",
@@ -548,11 +562,11 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
 
     const diagnosticsOf = (src: string): string[] => diagnostics(analyzer.get(open(src).document)).map(d => d.message)
     check("directives: ignore, expect-error and nocheck", [
-        diagnosticsOf(`--@luaut-ignore\nconst a: number = "x"\n`),
-        diagnosticsOf(`--@luaut-expect-error\nconst a: number = 1\n`),
-        diagnosticsOf(`--@luaut-nocheck\nconst a: number = "x"\nnope()\n`),
-        diagnosticsOf(`--@luaut-nocheck\nconst a = \n`).length,
-    ], [[], ["Unused '@luaut-expect-error' directive"], [], 1])
+        diagnosticsOf(`--@tilua-ignore\nconst a: number = "x"\n`),
+        diagnosticsOf(`--@tilua-expect-error\nconst a: number = 1\n`),
+        diagnosticsOf(`--@tilua-nocheck\nconst a: number = "x"\nnope()\n`),
+        diagnosticsOf(`--@tilua-nocheck\nconst a = \n`).length,
+    ], [[], ["Unused '@tilua-expect-error' directive"], [], 1])
     check("undeclared: a name nothing declares, and not an assigned global or a declare", [
         diagnosticsOf(`print(typo, game)
 const t = Missing.x
@@ -574,9 +588,9 @@ print(later)
     const { pathToFileURL } = await import("node:url")
     const { importDefinition } = await import("../src/features/imports.js")
 
-    const root = mkdtempSync(join(tmpdir(), "luaut-modules-"))
+    const root = mkdtempSync(join(tmpdir(), "tilua-modules-"))
     mkdirSync(join(root, "shared"))
-    writeFileSync(join(root, "shared", "shapes.luaut"), [
+    writeFileSync(join(root, "shared", "shapes.tilua"), [
         "export type Point = { x: number, y: number }",
         "export const ORIGIN: Point = { x: 0, y: 0 }",
         "export function distance(a: Point, b: Point): number {",
@@ -588,33 +602,39 @@ print(later)
         "",
     ].join("\n"))
 
+    // Two files exporting the same name, for the auto-import case below. They
+    // go in with the other fixtures because the directory listing is cached
+    // for a few seconds once anything has asked for it.
+    writeFileSync(join(root, "exportsM1.tilua"), "export const m = 1\n")
+    writeFileSync(join(root, "exportsM2.tilua"), "export const m = 2\n")
+
     const modules = new Analyzer({ libs: testLibs })
     const file = (name: string, text: string) => {
         const index = text.indexOf("‸")
         const clean = index < 0 ? text : text.slice(0, index) + text.slice(index + 1)
         writeFileSync(join(root, name), clean)
-        const document = TextDocument.create(pathToFileURL(join(root, name)).href, "luaut", 1, clean)
+        const document = TextDocument.create(pathToFileURL(join(root, name)).href, "tilua", 1, clean)
         return { document, cursor: document.positionAt(Math.max(index, 0)) }
     }
     const hoverText = (document: TextDocument, cursor: Position): string | undefined =>
         (hover(modules.get(document), cursor)?.contents as { value: string } | undefined)?.value
 
     {
-        const { document, cursor } = file("main.luaut",
+        const { document, cursor } = file("main.tilua",
             `import origin, { ORIGIN, distance, Point } from "./shared/shapes"\nconst p: Point = { x: 1, y: 2 }\nprint(dist‸ance(p, ORIGIN), origin)\n`)
         check("modules: an imported function has its real type, not any",
             hoverText(document, cursor)?.includes("=> number"), true)
         check("modules: a valid import has no diagnostics", diagnostics(modules.get(document)).map(d => d.message), [])
     }
     {
-        const { document } = file("broken.luaut",
+        const { document } = file("broken.tilua",
             `import { nope } from "./shared/shapes"\nimport x from "./missing"\nprint(nope, x)\n`)
         const messages = diagnostics(modules.get(document)).map(d => d.message)
         contains("modules: a missing module is reported", messages, "Cannot find module './missing'")
         contains("modules: a missing export is reported", messages, "Module './shared/shapes' has no exported member 'nope'")
     }
     {
-        const { document } = file("typed.luaut", `import { ORIGIN } from "./shared/shapes"\nconst wrong: string = ORIGIN\n`)
+        const { document } = file("typed.tilua", `import { ORIGIN } from "./shared/shapes"\nconst wrong: string = ORIGIN\n`)
         check("modules: an import is type-checked", diagnostics(modules.get(document)).length, 1)
     }
     {
@@ -624,58 +644,83 @@ print(later)
             return item?.additionalTextEdits?.map(e => [e.range.start.line, e.range.start.character, e.newText])
         }
         check("auto-import: another file's export adds its import above the code",
-            edits("auto1.luaut", `print(1)\ndist‸\n`, "distance"), [[0, 0, `import { distance } from "./shared/shapes"\n\n`]])
+            edits("auto1.tilua", `print(1)\ndist‸\n`, "distance"), [[0, 0, `import { distance } from "./shared/shapes"\n\n`]])
         check("auto-import: after the imports already there",
-            edits("auto2.luaut", `import { x } from "./other"\nprint(x)\nORIG‸\n`, "ORIGIN"), [[1, 0, `import { ORIGIN } from "./shared/shapes"\n`]])
+            edits("auto2.tilua", `import { x } from "./other"\nprint(x)\nORIG‸\n`, "ORIGIN"), [[1, 0, `import { ORIGIN } from "./shared/shapes"\n`]])
         check("auto-import: joins an import of the same file",
-            edits("auto3.luaut", `import { ORIGIN } from "./shared/shapes"\nprint(ORIGIN)\ndist‸\n`, "distance"), [[0, 15, ", distance"]])
+            edits("auto3.tilua", `import { ORIGIN } from "./shared/shapes"\nprint(ORIGIN)\ndist‸\n`, "distance"), [[0, 15, ", distance"]])
         check("auto-import: a type in a type position",
-            edits("auto4.luaut", `const p: Poi‸ = { x: 1, y: 2 }\n`, "Point"), [[0, 0, `import { Point } from "./shared/shapes"\n\n`]])
+            edits("auto4.tilua", `const p: Poi‸ = { x: 1, y: 2 }\n`, "Point"), [[0, 0, `import { Point } from "./shared/shapes"\n\n`]])
         check("auto-import: not for a name already in scope",
-            edits("auto5.luaut", `const distance = 1\ndist‸\n`, "distance"), undefined)
+            edits("auto5.tilua", `const distance = 1\ndist‸\n`, "distance"), undefined)
+
+        // A name used but not declared is a global binding like any other, and
+        // it is exactly the name you are about to import — so it must not count
+        // as already in scope. It did, which left the import unoffered from the
+        // moment the name appeared anywhere in the file.
+        const used = file("auto7.tilua", `print(m)\nm‸\n`)
+        check("auto-import: still offered for a name the file uses but never declares",
+            completion(modules, used.document, used.cursor)
+                .filter(i => i.label === "m" && i.additionalTextEdits).length, 2)
+
+        // Two files exporting the same name: both are offered, each saying
+        // which file it would import from. Offering only one would silently
+        // pick a file on the author's behalf.
+        const { document, cursor } = file("auto6.tilua", `m‸\n`)
+        const offers = completion(modules, document, cursor)
+            .filter(i => i.label === "m" && i.additionalTextEdits)
+        check("auto-import: every file exporting a name is offered, not just one", [
+            offers.length,
+            offers.map(i => i.labelDetails?.description).sort(),
+            offers.map(i => i.detail).sort(),
+        ], [
+            2,
+            ["./exportsM1", "./exportsM2"],
+            [`import { m } from "./exportsM1"`, `import { m } from "./exportsM2"`],
+        ])
     }
     {
-        const { document, cursor } = file("paths.luaut", `import { ORIGIN } from "./‸"\n`)
+        const { document, cursor } = file("paths.tilua", `import { ORIGIN } from "./‸"\n`)
         const labels = completion(modules, document, cursor).map(i => i.label)
         contains("modules: path completion lists folders", labels, "shared/")
         contains("modules: path completion lists modules without the extension", labels, "main")
         check("modules: a file is not offered to itself", labels.includes("paths"), false)
     }
     {
-        const { document, cursor } = file("nested.luaut", `import { ORIGIN } from "./shared/‸"\n`)
+        const { document, cursor } = file("nested.tilua", `import { ORIGIN } from "./shared/‸"\n`)
         contains("modules: path completion inside a folder", completion(modules, document, cursor).map(i => i.label), "shapes")
     }
     {
-        const { document, cursor } = file("names.luaut", `import { ORIGIN, ‸ } from "./shared/shapes"\n`)
+        const { document, cursor } = file("names.tilua", `import { ORIGIN, ‸ } from "./shared/shapes"\n`)
         const labels = completion(modules, document, cursor).map(i => i.label)
         contains("modules: exported values inside the braces", labels, "distance")
         contains("modules: exported types inside the braces", labels, "Point")
         check("modules: names already imported are not offered again", labels.includes("ORIGIN"), false)
     }
     {
-        const { document, cursor } = file("jump.luaut", `import { dist‸ance } from "./shared/shapes"\nprint(distance)\n`)
+        const { document, cursor } = file("jump.tilua", `import { dist‸ance } from "./shared/shapes"\nprint(distance)\n`)
         const location = importDefinition(modules, modules.get(document), cursor)
-        check("modules: definition jumps into the other module", location?.uri.endsWith("shapes.luaut"), true)
+        check("modules: definition jumps into the other module", location?.uri.endsWith("shapes.tilua"), true)
         check("modules: ...to the exported declaration", location?.range.start, { line: 2, character: 16 })
     }
     {
-        const { document, cursor } = file("member.luaut", `import origin from "./shared/shapes"\norigin.‸\n`)
+        const { document, cursor } = file("member.tilua", `import origin from "./shared/shapes"\norigin.‸\n`)
         contains("modules: members of a default import", completion(modules, document, cursor).map(i => i.label), "x")
     }
     {
-        const { document, cursor } = file("namespace.luaut", `import * as Shapes from "./shared/shapes"\nShapes.‸\n`)
+        const { document, cursor } = file("namespace.tilua", `import * as Shapes from "./shared/shapes"\nShapes.‸\n`)
         const labels = completion(modules, document, cursor).map(i => i.label)
         contains("modules: `import * as` completes the module's exports", labels, "distance")
         contains("modules: including its default", labels, "default")
     }
     {
-        const { document, cursor } = file("namespace-type.luaut",
+        const { document, cursor } = file("namespace-type.tilua",
             `import * as Shapes from "./shared/shapes"\nconst p: Shapes.Point = Shapes.ORIGIN\nprint(Sha‸pes.distance(p, p))\n`)
         check("modules: a namespace's exported type and values check", diagnostics(modules.get(document)).map(d => d.message), [])
-        check("modules: hovering the namespace", /^```luaut-hover\nShapes: \{[\s\S]*readonly distance/.test(hoverText(document, cursor) ?? ""), true)
+        check("modules: hovering the namespace", /^```tilua-hover\nShapes: \{[\s\S]*readonly distance/.test(hoverText(document, cursor) ?? ""), true)
     }
     {
-        const { document, cursor } = file("type-import.luaut",
+        const { document, cursor } = file("type-import.tilua",
             `import type { Point, distance } from "./shared/shapes"\nconst p: Point = { x: 1, y: 2 }\nprint(dist‸ance)\n`)
         check("modules: a type-only import used as a value is an error", diagnostics(modules.get(document)).map(d => d.message),
             ["'distance' is imported with 'import type' and can only be used as a type"])
@@ -685,28 +730,28 @@ print(later)
         void cursor
     }
     {
-        const { document } = file("assign-import.luaut", `import { ORIGIN } from "./shared/shapes"\nORIGIN = nil as any\n`)
+        const { document } = file("assign-import.tilua", `import { ORIGIN } from "./shared/shapes"\nORIGIN = nil as any\n`)
         check("modules: assigning to an import is an error",
             diagnostics(modules.get(document)).map(d => d.message), ["Cannot assign to 'ORIGIN' — it is an import"])
     }
     {
         // Export lists, a renamed export, and `export *`.
-        writeFileSync(join(root, "barrel.luaut"), [
+        writeFileSync(join(root, "barrel.tilua"), [
             `export * from "./shared/shapes"`,
             `const five = 5`,
             `type Pair = [number, number]`,
             `export { five, Pair, five as cinq }`,
             "",
         ].join("\n"))
-        const { document } = file("fromBarrel.luaut",
+        const { document } = file("fromBarrel.tilua",
             `import { distance, ORIGIN, five, cinq, Pair } from "./barrel"\nconst pair: Pair = [1, 2]\nprint(distance(ORIGIN, ORIGIN), five, pair)\nconst wrong: string = cinq\n`)
         check("modules: export lists and `export *` carry their types",
             diagnostics(modules.get(document)).map(d => d.message), ["Type '5' is not assignable to 'string'"])
         const location = importDefinition(modules, modules.get(document), { line: 0, character: 10 })
-        check("modules: definition follows `export *` to the declaring module", location?.uri.endsWith("shapes.luaut"), true)
+        check("modules: definition follows `export *` to the declaring module", location?.uri.endsWith("shapes.tilua"), true)
     }
     {
-        const { document } = file("badExports.luaut",
+        const { document } = file("badExports.tilua",
             `export { nothing }\nexport { nope } from "./shared/shapes"\nexport * from "./gone"\n`)
         const messages = diagnostics(modules.get(document)).map(d => d.message)
         contains("modules: exporting a name that does not exist", messages, "Cannot find name 'nothing' to export")
@@ -715,26 +760,26 @@ print(later)
     }
     {
         // A module that does not exist yet, and then does.
-        const { document } = file("later.luaut", `import { soon } from "./notYet"\nprint(soon)\n`)
+        const { document } = file("later.tilua", `import { soon } from "./notYet"\nprint(soon)\n`)
         contains("modules: before the module exists",
             diagnostics(modules.get(document)).map(d => d.message), "Cannot find module './notYet'")
-        writeFileSync(join(root, "notYet.luaut"), `export const soon = 1\n`)
+        writeFileSync(join(root, "notYet.tilua"), `export const soon = 1\n`)
         check("modules: creating it re-checks the importer", diagnostics(modules.get(document)).map(d => d.message), [])
     }
     {
-        const { document, cursor } = file("typeImport.luaut",
+        const { document, cursor } = file("typeImport.tilua",
             `import { Po‸int } from "./shared/shapes"\nconst p: Point = { x: 1, y: 2 }\n`)
         check("modules: a type-only import hovers as its type",
             hoverText(document, cursor)?.includes("type Point = { x: number, y: number }"), true)
-        const typed = file("typePosition.luaut", `import { Point } from "./shared/shapes"\nconst q: Po‸ = { x: 1, y: 2 }\n`)
+        const typed = file("typePosition.tilua", `import { Point } from "./shared/shapes"\nconst q: Po‸ = { x: 1, y: 2 }\n`)
         contains("modules: an imported type is offered in a type position",
             completion(modules, typed.document, typed.cursor).map(i => i.label), "Point")
     }
     {
         // Editing the imported module invalidates the importer's cached result.
-        const { document } = file("watch.luaut", `import { ORIGIN } from "./shared/shapes"\nconst n: { x: number, y: number } = ORIGIN\n`)
+        const { document } = file("watch.tilua", `import { ORIGIN } from "./shared/shapes"\nconst n: { x: number, y: number } = ORIGIN\n`)
         check("modules: before the export changes", diagnostics(modules.get(document)).length, 0)
-        writeFileSync(join(root, "shared", "shapes.luaut"), `export const ORIGIN = "moved"\n`)
+        writeFileSync(join(root, "shared", "shapes.tilua"), `export const ORIGIN = "moved"\n`)
         check("modules: after it changes, the importer is re-checked", diagnostics(modules.get(document)).length, 1)
     }
 }
@@ -777,53 +822,53 @@ print(later)
     const { dirname, join } = await import("node:path")
     const { pathToFileURL } = await import("node:url")
 
-    const root = mkdtempSync(join(tmpdir(), "luaut-cycles-"))
+    const root = mkdtempSync(join(tmpdir(), "tilua-cycles-"))
     const files: Record<string, string> = {
-        "values/a.luaut": `import { fromB } from "./b"\nexport function fromA(): number {\n    return 1\n}\nconst wrongA: number = fromB()\nprint(wrongA)\n`,
-        "values/b.luaut": `import { fromA } from "./a"\nexport function fromB(): string {\n    return "b"\n}\nconst wrongB: string = fromA()\nprint(wrongB)\n`,
-        "types/a.luaut": `import { B } from "./b"\nexport type A = { name: string, b: B | nil }\nconst wrongA: A = { name: 1, b: nil }\nprint(wrongA)\n`,
-        "types/b.luaut": `import { A } from "./a"\nexport type B = { count: number, a: A | nil }\nconst wrongB: B = { count: "x", a: nil }\nprint(wrongB)\n`,
-        "star/a.luaut": `export * from "./b"\nexport const ONE = 1\n`,
-        "star/b.luaut": `export * from "./a"\nexport const TWO = 2\n`,
-        "star/main.luaut": `import { ONE, TWO } from "./a"\nconst bad1: string = ONE\nconst bad2: string = TWO\nprint(bad1, bad2)\n`,
+        "values/a.tilua": `import { fromB } from "./b"\nexport function fromA(): number {\n    return 1\n}\nconst wrongA: number = fromB()\nprint(wrongA)\n`,
+        "values/b.tilua": `import { fromA } from "./a"\nexport function fromB(): string {\n    return "b"\n}\nconst wrongB: string = fromA()\nprint(wrongB)\n`,
+        "types/a.tilua": `import { B } from "./b"\nexport type A = { name: string, b: B | nil }\nconst wrongA: A = { name: 1, b: nil }\nprint(wrongA)\n`,
+        "types/b.tilua": `import { A } from "./a"\nexport type B = { count: number, a: A | nil }\nconst wrongB: B = { count: "x", a: nil }\nprint(wrongB)\n`,
+        "star/a.tilua": `export * from "./b"\nexport const ONE = 1\n`,
+        "star/b.tilua": `export * from "./a"\nexport const TWO = 2\n`,
+        "star/main.tilua": `import { ONE, TWO } from "./a"\nconst bad1: string = ONE\nconst bad2: string = TWO\nprint(bad1, bad2)\n`,
         // What the first pass alone got wrong: exports of the far side inferred
         // from the near side.
-        "back/a.luaut": `import { useA, AliasOfA, takesA } from "./b"\nexport function fromA(): number {\n    return 1\n}\nexport type A = { name: string }\nconst viaValue: string = useA\nconst viaAlias: AliasOfA = { name: 1 }\nconst viaFunction: string = takesA({ name: "x" })\nprint(viaValue, viaAlias, viaFunction)\n`,
-        "back/b.luaut": `import { fromA, A } from "./a"\nexport const useA = fromA()\nexport type AliasOfA = A\nexport function takesA(a: A): number {\n    return 1\n}\n`,
+        "back/a.tilua": `import { useA, AliasOfA, takesA } from "./b"\nexport function fromA(): number {\n    return 1\n}\nexport type A = { name: string }\nconst viaValue: string = useA\nconst viaAlias: AliasOfA = { name: 1 }\nconst viaFunction: string = takesA({ name: "x" })\nprint(viaValue, viaAlias, viaFunction)\n`,
+        "back/b.tilua": `import { fromA, A } from "./a"\nexport const useA = fromA()\nexport type AliasOfA = A\nexport function takesA(a: A): number {\n    return 1\n}\n`,
         // A cycle the opened file is not part of: b <-> c.
-        "deep/main.luaut": `import { doubled } from "./b"\nconst wrong: string = doubled\nprint(wrong)\n`,
-        "deep/b.luaut": `import { derived } from "./c"\nexport const base = 1\nexport const doubled = derived\n`,
-        "deep/c.luaut": `import { base } from "./b"\nexport const derived = base\n`,
+        "deep/main.tilua": `import { doubled } from "./b"\nconst wrong: string = doubled\nprint(wrong)\n`,
+        "deep/b.tilua": `import { derived } from "./c"\nexport const base = 1\nexport const doubled = derived\n`,
+        "deep/c.tilua": `import { base } from "./b"\nexport const derived = base\n`,
     }
     for (const [path, text] of Object.entries(files)) {
         mkdirSync(dirname(join(root, path)), { recursive: true })
         writeFileSync(join(root, path), text)
     }
     const messagesOf = (analyzer: Analyzer, path: string): string[] => diagnostics(analyzer.get(
-        TextDocument.create(pathToFileURL(join(root, path)).href, "luaut", 1, files[path]))).map(d => d.message)
+        TextDocument.create(pathToFileURL(join(root, path)).href, "tilua", 1, files[path]))).map(d => d.message)
     const fresh = (): Analyzer => new Analyzer({ libs: testLibs })
 
     {
         const cycles = fresh()
-        check("cycles: values, the first file opened", messagesOf(cycles, "values/a.luaut"), ["Type 'string' is not assignable to 'number'"])
-        check("cycles: values, the second", messagesOf(cycles, "values/b.luaut"), ["Type 'number' is not assignable to 'string'"])
+        check("cycles: values, the first file opened", messagesOf(cycles, "values/a.tilua"), ["Type 'string' is not assignable to 'number'"])
+        check("cycles: values, the second", messagesOf(cycles, "values/b.tilua"), ["Type 'number' is not assignable to 'string'"])
     }
-    check("cycles: values, opened the other way round", messagesOf(fresh(), "values/b.luaut"), ["Type 'number' is not assignable to 'string'"])
+    check("cycles: values, opened the other way round", messagesOf(fresh(), "values/b.tilua"), ["Type 'number' is not assignable to 'string'"])
     {
         const cycles = fresh()
-        check("cycles: types, one side", messagesOf(cycles, "types/a.luaut").length, 1)
-        check("cycles: types, the other", messagesOf(cycles, "types/b.luaut").length, 1)
+        check("cycles: types, one side", messagesOf(cycles, "types/a.tilua").length, 1)
+        check("cycles: types, the other", messagesOf(cycles, "types/b.tilua").length, 1)
     }
-    check("cycles: `export *` both ways", messagesOf(fresh(), "star/main.luaut"),
+    check("cycles: `export *` both ways", messagesOf(fresh(), "star/main.tilua"),
         ["Type '1' is not assignable to 'string'", "Type '2' is not assignable to 'string'"])
     check("cycles: an export inferred back from the importing file is not `any`",
-        messagesOf(fresh(), "back/a.luaut"),
+        messagesOf(fresh(), "back/a.tilua"),
         [
             "Type 'number' is not assignable to 'string'",
-            "Type '{ name: number }' is not assignable to '{ name: string }'",
+            "Type '{ name: number }' is not assignable to '{ name: string }', 'name' is number, not string",
             "Type 'number' is not assignable to 'string'",
         ])
-    check("cycles: a cycle the opened file is not part of", messagesOf(fresh(), "deep/main.luaut"),
+    check("cycles: a cycle the opened file is not part of", messagesOf(fresh(), "deep/main.tilua"),
         ["Type '1' is not assignable to 'string'"])
 
     rmSync(root, { recursive: true, force: true })
@@ -837,21 +882,21 @@ print(later)
     const { dirname, join } = await import("node:path")
     const { fileURLToPath, pathToFileURL } = await import("node:url")
 
-    const root = mkdtempSync(join(tmpdir(), "luaut-project-"))
+    const root = mkdtempSync(join(tmpdir(), "tilua-project-"))
     const put = (path: string, text: string): void => {
         mkdirSync(dirname(join(root, path)), { recursive: true })
         writeFileSync(join(root, path), text)
     }
     // The type libraries, installed the way a project would have them.
     for (const name of ["lua", "roblox"]) {
-        const installed = fileURLToPath(new URL(`../node_modules/@luaut/${name}/`, import.meta.url))
-        for (const file of ["package.json", "index.d.luaut"]) {
-            put(`node_modules/@luaut/${name}/${file}`, readFileSync(join(installed, file), "utf8"))
+        const installed = fileURLToPath(new URL(`../node_modules/@tilua-types/${name}/`, import.meta.url))
+        for (const file of ["package.json", "index.d.tilua"]) {
+            put(`node_modules/@tilua-types/${name}/${file}`, readFileSync(join(installed, file), "utf8"))
         }
     }
 
-    put("game/luaut.config.json", JSON.stringify({ types: ["roblox"], paths: { "@shared/*": ["shared/*"] }, sourceMap: "sourcemap.json" }))
-    put("game/shared/util.luaut", "export const VALUE = 1\n")
+    put("game/tilua.config.json", JSON.stringify({ types: ["roblox"], paths: { "@shared/*": ["shared/*"] }, sourceMap: "sourcemap.json" }))
+    put("game/shared/util.tilua", "export const VALUE = 1\n")
     put("game/sourcemap.json", JSON.stringify({
         name: "Game", className: "DataModel", children: [
             { name: "ReplicatedStorage", className: "ReplicatedStorage", children: [
@@ -860,50 +905,50 @@ print(later)
             ] },
         ],
     }))
-    put("game/lite/luaut.config.json", JSON.stringify({ types: ["luau"], paths: {}, sourceMap: null }))
-    put("dup/luaut.config.json", "{}")
-    put("dup/luaut.config.jsonc", "{}")
-    put("missing/luaut.config.json", JSON.stringify({ types: ["nope"], paths: {}, sourceMap: null }))
+    put("game/lite/tilua.config.json", JSON.stringify({ types: ["luau"], paths: {}, sourceMap: null }))
+    put("dup/tilua.config.json", "{}")
+    put("dup/tilua.config.jsonc", "{}")
+    put("missing/tilua.config.json", JSON.stringify({ types: ["nope"], paths: {}, sourceMap: null }))
 
     const projects = new Analyzer()
     const openFile = (path: string, text: string): TextDocument => {
         put(path, text)
-        return TextDocument.create(pathToFileURL(join(root, path)).href, "luaut", 1, text)
+        return TextDocument.create(pathToFileURL(join(root, path)).href, "tilua", 1, text)
     }
 
-    const main = projects.get(openFile("game/main.luaut", [
+    const main = projects.get(openFile("game/main.tilua", [
         `import { VALUE } from "@shared/util"`,
         `const remotes: Folder = script.Parent.Remotes`,
         `const value: number = VALUE`,
         `const wrong: string = game.ReplicatedStorage.Remotes`,
         "",
     ].join("\n")))
-    check("projects: a file takes its folder's config", main.project.config?.path.endsWith(join("game", "luaut.config.json")), true)
+    check("projects: a file takes its folder's config", main.project.config?.path.endsWith(join("game", "tilua.config.json")), true)
     const mainMessages = diagnostics(main).map(d => d.message)
     check("projects: types, a paths alias and the sourcemap all apply — only the deliberate error remains",
         mainMessages.length === 1 && mainMessages[0].endsWith("is not assignable to 'string'"), true)
 
-    const lite = projects.get(openFile("game/lite/x.luaut", "print(game)\n"))
+    const lite = projects.get(openFile("game/lite/x.tilua", "print(game)\n"))
     check("projects: a nested config replaces the outer one",
-        [lite.project.config?.path.endsWith(join("lite", "luaut.config.json")), lite.types.aliases.has("Part"), lite.types.aliases.has("Partial")],
+        [lite.project.config?.path.endsWith(join("lite", "tilua.config.json")), lite.types.aliases.has("Part"), lite.types.aliases.has("Partial")],
         [true, false, true])
 
     const loose = projects.get(TextDocument.create(
-        pathToFileURL(join(dirname(root), `luaut-no-config-${Date.now()}`, "x.luaut")).href, "luaut", 1, "print(1)\n"))
+        pathToFileURL(join(dirname(root), `tilua-no-config-${Date.now()}`, "x.tilua")).href, "tilua", 1, "print(1)\n"))
     check("projects: a file no config covers has only the language's own types",
         [loose.project.config, [...loose.types.aliases.keys()].sort().join(" ")],
         [undefined, "Exclude Extract Falsy Mutable NonNullable Omit Parameters Partial Pick Readonly Record Required ReturnType Truthy"])
 
     check("projects: two configs in one folder are reported on both",
-        projects.get(openFile("dup/x.luaut", "")).project.problems.length, 2)
+        projects.get(openFile("dup/x.tilua", "")).project.problems.length, 2)
     check("projects: a missing type library is reported",
-        projects.get(openFile("missing/x.luaut", "")).project.problems.map(problem => problem.message),
-        ["Cannot find type library '@luaut/nope'. Install it with: npm i -D @luaut/nope"])
+        projects.get(openFile("missing/x.tilua", "")).project.problems.map(problem => problem.message),
+        ["Cannot find type library '@tilua-types/nope'. Install it with: npm i -D @tilua-types/nope"])
 
     // Editing a config re-checks the files under it.
-    put("game/lite/luaut.config.json", JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
+    put("game/lite/tilua.config.json", JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
     check("projects: editing a config re-checks its files",
-        projects.get(openFile("game/lite/x.luaut", "print(game)\n")).types.aliases.has("Part"), true)
+        projects.get(openFile("game/lite/x.tilua", "print(game)\n")).types.aliases.has("Part"), true)
 
     const labelsAt = (path: string, text: string): string[] => {
         const index = text.indexOf("‸")
@@ -911,9 +956,9 @@ print(later)
         return completion(projects, document, document.positionAt(index)).map(i => i.label)
     }
     contains("projects: a paths alias is offered as an import path",
-        labelsAt("game/c1.luaut", `import { VALUE } from "@‸"\n`), "@shared/")
+        labelsAt("game/c1.tilua", `import { VALUE } from "@‸"\n`), "@shared/")
     contains("projects: and what is inside it",
-        labelsAt("game/c2.luaut", `import { VALUE } from "@shared/‸"\n`), "util")
+        labelsAt("game/c2.tilua", `import { VALUE } from "@shared/‸"\n`), "util")
 
     rmSync(root, { recursive: true, force: true })
 }
@@ -1021,7 +1066,7 @@ print(later)
     const hoverAt = (src: string): string | undefined => {
         const opened = open(src)
         return (hover(analyzer.get(opened.document), opened.cursor)?.contents as { value: string } | undefined)
-            ?.value.replace(/^```luaut-hover\n|\n```$/g, "")
+            ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
     check("records: a pairs key is the union of the property names",
         hoverAt(head + `        print(Remote‸Name)\n    }\n}\n`), `RemoteName: "Char" | "GetSettings"`)
@@ -1050,7 +1095,7 @@ print(later)
 
 // --- caching -----------------------------------------------------------
 {
-    const document = TextDocument.create("file:///cache.luaut", "luaut", 1, "const a = 1\n")
+    const document = TextDocument.create("file:///cache.tilua", "tilua", 1, "const a = 1\n")
     check("analysis is cached per version", analyzer.get(document) === analyzer.get(document), true)
 }
 
@@ -1115,13 +1160,13 @@ print(later)
         const { document, cursor } = open(CLASS.replace("class Dog", "class Do‸g"))
         check("hover: a class reads as it is written",
             (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nclass Dog extends Animal {\n    breed: string\n    fetch: (this: Dog) => boolean\n}\n```")
+            "```tilua-hover\nclass Dog extends Animal {\n    breed: string\n    fetch: (this: Dog) => boolean\n}\n```")
     }
     {
         const { document, cursor } = open(`${CLASS}const y: An‸imal = d\n`)
         check("hover: naming a class in a type shows the class",
             (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nclass Animal {\n    name: string\n    speak: (this: Animal) => string\n    readonly label: string\n}\n```")
+            "```tilua-hover\nclass Animal {\n    name: string\n    speak: (this: Animal) => string\n    readonly label: string\n}\n```")
     }
 
     // The outline lists a class and what is in it.
@@ -1167,15 +1212,15 @@ print(later)
         const { document, cursor } = open(`${BOX}const n‸ = new Box("a")\n`)
         check("hover: a generic class is shown at the argument it was made with",
             (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nconst n: Box<string>\n```")
+            "```tilua-hover\nconst n: Box<string>\n```")
         const got = open(`${BOX}const n = new Box(1)\nconst g‸ot = n:get()\n`)
         check("hover: a generic class's method answers at that argument",
             (hover(analyzer.get(got.document), got.cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nconst got: number\n```")
+            "```tilua-hover\nconst got: number\n```")
         const annotated = open(`${BOX}const which: Box<number> = new Box(1)\nconst wrong: Box<number> = new Box("a")\n`)
         check("diagnostics: a generic class is not another instantiation of itself",
             diagnostics(analyzer.get(annotated.document)).map(d => d.message),
-            ["Type 'Box<string>' is not assignable to 'Box<number>'"])
+            ["Type 'Box<string>' is not assignable to 'Box<number>', 'value' is string, not number"])
     }
 
     // A class written as a value takes the name it is bound to.
@@ -1199,7 +1244,7 @@ print(later)
         const opened = open(source.replace("const c =", "const c‸ ="))
         check("hover: a class written as a value is known by the name it is bound to",
             (hover(analyzer.get(opened.document), opened.cursor)?.contents as { value: string }).value,
-            "```luaut-hover\nconst c: Counter\n```")
+            "```tilua-hover\nconst c: Counter\n```")
     }
 }
 
@@ -1212,7 +1257,7 @@ print(later)
         for (let depth = 0; depth < 6; depth++) {
             const answer = hover(analyzer.get(document), cursor, depth)
             if (!answer) break
-            out.push((answer.contents as { value: string }).value.replace(/```luaut-hover\n|\n```/g, ""))
+            out.push((answer.contents as { value: string }).value.replace(/```tilua-hover\n|\n```/g, ""))
             if (!answer.canExpand) break
         }
         return out

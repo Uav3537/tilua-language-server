@@ -14,7 +14,7 @@
 import {
     isClassType, arrayOf, tuple, objectType, fn, union, intersection,
     aliasNameOf, withoutAliasName, type Type,
-} from "luaut-parser"
+} from "@tilua/parser"
 
 /** `type`, with the names standing one step in replaced by what they stand
  *  for, `depth` times over. `seen` holds the names already opened along this

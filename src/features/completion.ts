@@ -12,14 +12,14 @@ import {
     type CompletionItem, type Position,
 } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
-import { formatType, isClassType, type Expression, type Type, type TypeNode } from "luaut-parser"
+import { formatType, isClassType, isUnassignedGlobal, type Expression, type Type, type TypeNode } from "@tilua/parser"
 import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
 import { importItems, serviceItems } from "./autoImport.js"
 import { importCompletion } from "./imports.js"
 import { membersOf, signaturesOf, signatureLabel } from "./members.js"
 
-const PLACEHOLDER = "__luautCompletion__"
+const PLACEHOLDER = "__tiluaCompletion__"
 const IDENTIFIER_CHAR = /[A-Za-z0-9_]/
 
 export function completion(
@@ -110,8 +110,14 @@ export function completion(
 
     // Names in scope, then what picking an item can bring into scope: another
     // file's export (with its `import`), or a service (with its `GetService`).
+    // Only names the file really has. A name used but never declared is a
+    // global binding too, and the half-typed word under the cursor is exactly
+    // that — counting it as taken is how a name stopped offering the import
+    // that would have defined it.
     const taken = new Set<string>()
-    for (const binding of first.analysis.scopes.bindings.values()) taken.add(binding.name)
+    for (const binding of first.analysis.scopes.bindings.values()) {
+        if (!isUnassignedGlobal(binding)) taken.add(binding.name)
+    }
     const current = analyzer.get(document)
     return [
         ...valueItems(first.analysis, at, insideFunction(first.path)),

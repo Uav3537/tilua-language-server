@@ -3,14 +3,14 @@
  *
  * Every handler is the same three steps — get the cached analysis for the
  * document, ask one feature module a question, hand back the answer. The
- * thinking lives in `features/`; nothing here knows about luaut.
+ * thinking lives in `features/`; nothing here knows about tilua.
  */
 import {
     createConnection, DiagnosticSeverity, ProposedFeatures, TextDocuments, TextDocumentSyncKind,
     type Connection, type Diagnostic, type InitializeParams, type InitializeResult, type Position,
 } from "vscode-languageserver/node"
 import { TextDocument } from "vscode-languageserver-textdocument"
-import type { ConfigProblem } from "luaut-parser"
+import type { ConfigProblem } from "@tilua/parser"
 import { Analyzer, pathOfUri, samePath, uriOfPath, type Analysis, type AnalyzerOptions } from "./analysis.js"
 import { importDefinition } from "./features/imports.js"
 import { diagnostics } from "./features/diagnostics.js"
@@ -23,7 +23,12 @@ import { semanticTokens, semanticTokensLegend } from "./features/semanticTokens.
 
 export interface ServerOptions extends AnalyzerOptions {}
 
-/** Attach the luaut language server to a connection. Exported separately from
+/** How long typing has to stop before the open files are re-checked. Long
+ *  enough that a burst of keystrokes costs one sweep rather than one each,
+ *  short enough that it still feels immediate once the hands stop. */
+const IDLE_MS = 250
+
+/** Attach the tilua language server to a connection. Exported separately from
  *  `startServer` so an editor extension can run it in-process over its own
  *  transport, and so the tests can drive it without spawning anything. */
 export function createServer(connection: Connection, options: ServerOptions = {}): void {
@@ -59,7 +64,7 @@ export function createServer(connection: Connection, options: ServerOptions = {}
             // keyword, a type or a name depends on where it stands.
             semanticTokensProvider: { legend: semanticTokensLegend, full: true },
         },
-        serverInfo: { name: "luaut-language-server" },
+        serverInfo: { name: "@tilua/language-server" },
     }))
 
     // --- semantic highlighting ---------------------------------------------
@@ -72,7 +77,7 @@ export function createServer(connection: Connection, options: ServerOptions = {}
     /** Config files currently showing problems, so fixed ones get cleared. */
     let configUris = new Set<string>()
 
-    const publishAll = (): void => {
+    const publishAll = (): void => analyzer.sweep(() => {
         const problems = new Map<string, ConfigProblem[]>()
         for (const document of documents.all()) {
             const analysis = analyzer.get(document)
@@ -97,7 +102,7 @@ export function createServer(connection: Connection, options: ServerOptions = {}
             if (!problems.has(uri)) void connection.sendDiagnostics({ uri, diagnostics: [] })
         }
         configUris = new Set(problems.keys())
-    }
+    })
 
     const problemDiagnostic = (problem: ConfigProblem): Diagnostic => {
         const line = Math.max((problem.line ?? 1) - 1, 0)
@@ -108,7 +113,7 @@ export function createServer(connection: Connection, options: ServerOptions = {}
         return {
             range: { start: { line, character }, end: { line, character: end } },
             severity: DiagnosticSeverity.Error,
-            source: "luaut",
+            source: "tilua",
             code: "config",
             message: problem.message,
         }
@@ -122,9 +127,9 @@ export function createServer(connection: Connection, options: ServerOptions = {}
         return [{
             range: { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } },
             severity: DiagnosticSeverity.Information,
-            source: "luaut",
+            source: "tilua",
             code: "no-config",
-            message: "No luaut.config.json applies to this file, so no types are loaded — not even `print`. "
+            message: "No tilua.config.json applies to this file, so no types are loaded — not even `print`. "
                 + "Add one to this folder or a folder above: "
                 + "{ \"types\": [], \"paths\": {}, \"sourceMap\": null }, "
                 + "listing in `types` the type libraries the project has installed.",
@@ -134,10 +139,30 @@ export function createServer(connection: Connection, options: ServerOptions = {}
     // Any change can affect every open file that imports the changed one, or
     // shares its config, so all of them are re-checked; unchanged ones come
     // straight from the cache.
-    documents.onDidOpen(publishAll)
-    documents.onDidChangeContent(publishAll)
+    //
+    // Typing is a change per keystroke, and a sweep over every open file costs
+    // far more than the gap between two of them — so the sweep waits until the
+    // typing stops. Diagnostics a keystroke old are worth nothing anyway: the
+    // line is still half-written. Everything else (opening a file, a change on
+    // disk) is a single event and runs at once.
+    let pending: NodeJS.Timeout | undefined
+    const publishSoon = (): void => {
+        if (pending) clearTimeout(pending)
+        pending = setTimeout(() => {
+            pending = undefined
+            publishAll()
+        }, IDLE_MS)
+    }
+    const publishNow = (): void => {
+        if (pending) clearTimeout(pending)
+        pending = undefined
+        publishAll()
+    }
+
+    documents.onDidOpen(publishNow)
+    documents.onDidChangeContent(publishSoon)
     // A module, config, type library or sourcemap changed outside the editor.
-    connection.onDidChangeWatchedFiles(publishAll)
+    connection.onDidChangeWatchedFiles(publishNow)
     documents.onDidClose(e => {
         analyzer.forget(e.document.uri)
         void connection.sendDiagnostics({ uri: e.document.uri, diagnostics: [] })
@@ -156,7 +181,7 @@ export function createServer(connection: Connection, options: ServerOptions = {}
     // The same hover, at a level the editor asks for. LSP has no way to say
     // "and now tell me more", so an editor that offers that asks here; every
     // other one gets the shortest reading through `onHover` above.
-    connection.onRequest("luaut/hover", (p: {
+    connection.onRequest("tilua/hover", (p: {
         textDocument: { uri: string }
         position: Position
         depth?: number

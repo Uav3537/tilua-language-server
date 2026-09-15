@@ -7,7 +7,7 @@
  * result is reused by hover, definition, completion and the rest.
  *
  * Nothing is built in. A file belongs to the project of the nearest
- * `luaut.config.json`: the type libraries it names, its `paths` aliases, and
+ * `tilua.config.json`: the type libraries it names, its `paths` aliases, and
  * its sourcemap's instance tree. A file no config covers gets no types at all.
  *
  * An import is resolved to a file, that file is analyzed the same way, and its
@@ -23,9 +23,9 @@ import {
     parse, parseWithRecovery, analyzeScopes, analyzeTypes, moduleExports, getBinding,
     findConfig, resolveTypeLibraries, moduleCandidates, sourceMapTypes,
     type Program, type ScopeAnalysis, type TypeAnalysis, type ParseError, type ModuleExports,
-    type Binding, type Identifier, type Type, type LuautConfig, type ConfigProblem, type ProjectHost,
+    type Binding, type Identifier, type Type, type TiluaConfig, type ConfigProblem, type ProjectHost,
     type SourceMapTypes, type Directives,
-} from "luaut-parser"
+} from "@tilua/parser"
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import { membersOf } from "./features/members.js"
 
@@ -35,7 +35,7 @@ export interface Analysis {
     readonly source: string
     readonly program: Program
     readonly parseErrors: readonly ParseError[]
-    /** `--@luaut-nocheck` / `--@luaut-ignore` / `--@luaut-expect-error`. */
+    /** `--@tilua-nocheck` / `--@tilua-ignore` / `--@tilua-expect-error`. */
     readonly directives: Directives
     readonly scopes: ScopeAnalysis
     readonly types: TypeAnalysis
@@ -50,7 +50,7 @@ export interface Analysis {
 
 export interface Project {
     /** The config that applies to the file, or `undefined` when none does. */
-    readonly config?: LuautConfig
+    readonly config?: TiluaConfig
     /** The types came from `AnalyzerOptions.libs`, not from a config. */
     readonly fixed: boolean
     /** What is wrong with the config, a type library it names, or its sourcemap. */
@@ -59,7 +59,7 @@ export interface Project {
 
 export interface AnalyzerOptions {
     /** Analyze every file against these definitions instead of the ones its
-     *  `luaut.config.json` names — for tests and for embedding the server. */
+     *  `tilua.config.json` names — for tests and for embedding the server. */
     libs?: readonly Program[]
     /** The open document for a file path, if there is one. */
     openDocument?: (path: string) => TextDocument | undefined
@@ -259,15 +259,76 @@ export class Analyzer {
         return this.modules.get(pathKey(path))?.analysis
     }
 
-    /** A file's text: the open document if there is one, else the disk. */
+    /** What was read from a path last time, and what the file system said
+     *  about it then. A missing file is remembered too, as the `-1` stamp. */
+    private readonly files = new Map<string, { mtimeMs: number; size: number; text: string | undefined }>()
+
+    /** What the file system said about each path during the sweep going on
+     *  now, or `undefined` outside one. */
+    private stampsThisSweep?: Map<string, { mtimeMs: number; size: number }>
+
+    /** Runs one sweep over the open files, during which each path is `stat`ed
+     *  at most once.
+     *
+     *  Re-checking every open file asks about the same handful of type
+     *  libraries and modules once per file — thousands of `stat` calls over a
+     *  project of any size. A sweep is synchronous, so nothing on disk can move
+     *  in the middle of one and the first answer stands for the rest of it.
+     *  Outside a sweep every path is read afresh, so a file written and then
+     *  asked about is seen. */
+    sweep<T>(run: () => T): T {
+        // A nested call belongs to the sweep already running.
+        if (this.stampsThisSweep) return run()
+        this.stampsThisSweep = new Map()
+        try {
+            return run()
+        } finally {
+            this.stampsThisSweep = undefined
+        }
+    }
+
+    private stamp(path: string): { mtimeMs: number; size: number } {
+        const known = this.stampsThisSweep?.get(path)
+        if (known) return known
+        // `-1` stands for "not a file we can read" — missing, or a directory.
+        let stamp = { mtimeMs: -1, size: -1 }
+        try {
+            const stats = statSync(path)
+            if (stats.isFile()) stamp = { mtimeMs: stats.mtimeMs, size: stats.size }
+        } catch {
+            // Not there; the -1 stamp says so.
+        }
+        this.stampsThisSweep?.set(path, stamp)
+        return stamp
+    }
+
+    /** A file's text: the open document if there is one, else the disk.
+     *
+     *  Freshness is checked against every dependency of every open file on
+     *  every keystroke, so this is on the hot path — and a project's type
+     *  library is a megabyte. Re-reading that each time, and then comparing it
+     *  character by character, was most of what made a real project slow. The
+     *  file is only read again when its size or mtime moves, and until then
+     *  the *same string* comes back, so the comparison in `isFresh` is a
+     *  pointer test rather than a scan of a megabyte. */
     readFile(path: string): string | undefined {
         const open = this.openDocument?.(path)
         if (open) return open.getText()
-        try {
-            return statSync(path).isFile() ? readFileSync(path, "utf8") : undefined
-        } catch {
-            return undefined
+
+        const { mtimeMs, size } = this.stamp(path)
+        const cached = this.files.get(path)
+        if (cached && cached.mtimeMs === mtimeMs && cached.size === size) return cached.text
+
+        let text: string | undefined
+        if (mtimeMs >= 0) {
+            try {
+                text = readFileSync(path, "utf8")
+            } catch {
+                text = undefined
+            }
         }
+        this.files.set(path, { mtimeMs, size, text })
+        return text
     }
 
     private candidatesFor(from: string, specifier: string): string[] {
@@ -502,7 +563,7 @@ function aliasesOf(libs: readonly Program[]): ReadonlyMap<string, Type> {
 }
 
 /** Where an option is written in a config, to point a problem at it. */
-export function optionPosition(config: LuautConfig, key: string): { line?: number; column?: number } {
+export function optionPosition(config: TiluaConfig, key: string): { line?: number; column?: number } {
     const offset = config.source.indexOf(JSON.stringify(key))
     if (offset < 0) return { line: 1, column: 1 }
     const before = config.source.slice(0, offset)

@@ -1,24 +1,35 @@
-# luaut-language-server
+# @tilua/language-server
 
-Language server (LSP) for **luaut** — the TypeScript-flavoured language that
-compiles to Luau. It is a thin layer over [`luaut-parser`][parser]: the parser
+Language server (LSP) for **tilua** — the TypeScript-flavoured language that
+compiles to Luau. It is a thin layer over [`@tilua/parser`][parser]: the parser
 does the parsing, scope analysis and flow-sensitive type analysis, and this
 package answers editor questions from the tables it produces.
 
-[parser]: https://www.npmjs.com/package/luaut-parser
+[parser]: https://www.npmjs.com/package/@tilua/parser
+
+**On VS Code you do not need this package** — the
+[extension][vscode] bundles it. Install it to
+wire tilua into any other editor that speaks LSP, or to call the features
+directly from a tool of your own.
+
+[vscode]: https://marketplace.visualstudio.com/search?term=tilua
 
 ```bash
-npm install luaut-language-server
-luaut-language-server --stdio
+npm install @tilua/language-server
+tilua-language-server --stdio          # or --node-ipc
 ```
+
+Attach it to the `tilua` language / `.tilua` files. Diagnostics need the
+project's type libraries, which the server reads from the
+`tilua.config.json` that applies to each file — nothing to configure here.
 
 ## What it does
 
 | request | notes |
 |---|---|
-| `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke. A name nothing declares is an error ("Cannot find name 'x'") whenever type libraries are loaded. `--@luaut-nocheck`, `--@luaut-ignore` and `--@luaut-expect-error` silence scope and type errors |
-| `hover` | the type as luaut writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil`. Also every name in a type or definitions file: `declare` names (with their overload count), classes (`declare class Part extends BasePart { ...what it adds }`), alias names, object-type properties, type parameters, `infer` names, and any type annotation, which reads as what it resolves to |
-| `luaut/hover` | the same hover, at a level the editor asks for (`depth`), and whether there is another (`canExpand`). Level 0 is the shortest true reading — names left as names — and each one opens the names standing a step further in: `const b: Shape`, then `{ kind: "circle", size: number }`, then whatever those are named after. A class stays its name, and a type that names itself opens once. LSP has no way to ask for this, so every other editor gets level 0 through `hover` |
+| `publishDiagnostics` | syntax, scope (redeclare, assign-to-`const`) and type errors, on open and on every keystroke. A name nothing declares is an error ("Cannot find name 'x'") whenever type libraries are loaded. `--@tilua-nocheck`, `--@tilua-ignore` and `--@tilua-expect-error` silence scope and type errors |
+| `hover` | the type as tilua writes it — the **narrowed** type at a reference, so a guarded `v` reads `string`, not `string \| nil`. Also every name in a type or definitions file: `declare` names (with their overload count), classes (`declare class Part extends BasePart { ...what it adds }`), alias names, object-type properties, type parameters, `infer` names, and any type annotation, which reads as what it resolves to |
+| `tilua/hover` | the same hover, at a level the editor asks for (`depth`), and whether there is another (`canExpand`). Level 0 is the shortest true reading — names left as names — and each one opens the names standing a step further in: `const b: Shape`, then `{ kind: "circle", size: number }`, then whatever those are named after. A class stays its name, and a type that names itself opens once. LSP has no way to ask for this, so every other editor gets level 0 through `hover` |
 | `semanticTokens` | colours from the parser, not from patterns — see [Highlighting](#highlighting) |
 | `definition` | the binding's declaration — and from an `import`, the export in the other module |
 | `references`, `documentHighlight` | every use of the binding |
@@ -30,12 +41,39 @@ luaut-language-server --stdio
 ### Modules
 
 An `import` resolves to a file relative to the importer (`./x`, `../x`; the
-extension may be left off, and a folder means its `index.luaut`). That module
+extension may be left off, and a folder means its `index.tilua`). That module
 is analyzed too, and its exports become the importer's types — so imported
 values are type-checked, imported types work in annotations, and a missing
 module or export is a diagnostic. Open documents are read before disk, so an
 import sees unsaved edits, and a cached result is dropped as soon as anything
 it imports changes.
+
+## Calling it directly
+
+A feature is `(analysis, position) -> answer`. Nothing in `features/` opens a
+connection or knows about documents, so an editor extension — or a lint
+script, or a docs generator — can call them without a server:
+
+```ts
+import { Analyzer, hover, diagnostics } from "@tilua/language-server"
+
+const analyzer = new Analyzer()               // or { libs: [...] } for your own definitions
+const analysis = analyzer.get(document)       // a vscode-languageserver TextDocument
+hover(analysis, { line: 3, character: 12 })
+diagnostics(analysis)
+```
+
+## Not yet
+
+- **One file at a time.** No workspace indexing, so no cross-file
+  go-to-definition, `workspace/symbol`, or diagnostics for files you have not
+  opened.
+- **No formatting** — there is no tilua printer yet (the compiler owns
+  emitting Luau, and it emits *Luau*, not tilua).
+- No code actions, inlay hints, or folding ranges.
+- Everything `@tilua/parser` does not check is invisible here too: unknown
+  properties, writes to `readonly`, generic constraints at call sites,
+  metatables.
 
 ## How it is put together
 
@@ -45,20 +83,6 @@ src/
   analysis.ts     parse -> scopes -> types, cached per document version
   ast-utils.ts    1-based spans <-> 0-based LSP positions, position -> node
   features/       one file per feature; plain functions, no LSP plumbing
-```
-
-A feature is `(analysis, position) -> answer`. Nothing in `features/` opens a
-connection or knows about documents, which is why `scripts/test.ts` can drive
-all of them in-process without spawning a server, and why an editor extension
-can call them directly:
-
-```ts
-import { Analyzer, hover, diagnostics } from "luaut-language-server"
-
-const analyzer = new Analyzer()               // or { libs: [...] } for your own definitions
-const analysis = analyzer.get(document)       // a vscode-languageserver TextDocument
-hover(analysis, { line: 3, character: 12 })
-diagnostics(analysis)
 ```
 
 ### Speculative parsing
@@ -74,12 +98,12 @@ cached.
 
 The names a file may use undeclared are not hard-coded: they are read out of
 the `declare` statements in the definitions passed to `Analyzer`. Adding a
-global to a `.d.luaut` is all it takes for the editor to stop calling it
+global to a `.d.tilua` is all it takes for the editor to stop calling it
 undefined.
 
 ### Highlighting
 
-A word's role in luaut depends on where it stands: `extends` is a keyword in a
+A word's role in tilua depends on where it stands: `extends` is a keyword in a
 type and a name elsewhere, `type Foo = ...` declares an alias while `type(x)`
 calls a builtin, `typeof x` in a type is a query while `typeof(v)` in code is a
 call. A TextMate grammar only sees characters, so it can only guess — and
@@ -95,30 +119,10 @@ before the server answers, and never disagrees with it after.
 ### Saying more
 
 A hover opens with the shortest thing that is true and says more when asked,
-as TypeScript's does. The server answers `luaut/hover` at whatever level it is
+as TypeScript's does. The server answers `tilua/hover` at whatever level it is
 given; how the editor offers the next one is the editor's business. The VS
 Code extension puts a link under the type, because the hover API that would
 draw the buttons is still a proposed one.
-
-## Not yet
-
-- **One file at a time.** No workspace indexing, so no cross-file
-  go-to-definition, `workspace/symbol`, or diagnostics for files you have not
-  opened.
-- **No formatting** — there is no luaut printer yet (the compiler owns
-  emitting Luau, and it emits *Luau*, not luaut).
-- No code actions, inlay hints, or folding ranges.
-- Everything `luaut-parser` does not check is invisible here too: unknown
-  properties, writes to `readonly`, generic constraints at call sites,
-  metatables.
-
-## Editors
-
-VS Code: [`luaut-vscode`](../luaut-vscode) — a separate project next door. It
-bundles this server into the extension, so its `.vsix` is self-contained.
-
-Anything else that speaks LSP: launch `luaut-language-server --stdio` (or
-`--node-ipc`) and attach it to the `luaut` language / `.luaut` files.
 
 ## Development
 

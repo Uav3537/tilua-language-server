@@ -1,6 +1,6 @@
 /** Syntax errors, scope errors and type errors, as one list. */
 import { DiagnosticSeverity, type Diagnostic } from "vscode-languageserver"
-import { applyDirectives, UNUSED_EXPECT_ERROR } from "luaut-parser"
+import { applyDirectives, UNUSED_EXPECT_ERROR } from "@tilua/parser"
 import type { Analysis } from "../analysis.js"
 import { toRange, toPosition } from "../ast-utils.js"
 
@@ -15,7 +15,7 @@ export function diagnostics(analysis: Analysis): Diagnostic[] {
         out.push({
             range: { start, end: { line: start.line, character: start.character + 1 } },
             severity: DiagnosticSeverity.Error,
-            source: "luaut",
+            source: "tilua",
             code: "syntax",
             // The parser appends `(line:column)`; the range already says that.
             message: error.message.replace(/\s*\(\d+:\d+\)$/, ""),
@@ -26,28 +26,28 @@ export function diagnostics(analysis: Analysis): Diagnostic[] {
         ...analysis.scopes.diagnostics.map(d => ({
             range: toRange(d.node),
             severity: DiagnosticSeverity.Error,
-            source: "luaut",
+            source: "tilua",
             code: d.kind,
             message: d.message,
         })),
         ...analysis.types.diagnostics.map(d => ({
             range: toRange(d.node),
             severity: DiagnosticSeverity.Error,
-            source: "luaut",
+            source: "tilua",
             code: "type",
             message: d.message,
         })),
     ]
 
-    // `--@luaut-nocheck`, `--@luaut-ignore`, `--@luaut-expect-error`.
+    // `--@tilua-nocheck`, `--@tilua-ignore`, `--@tilua-expect-error`.
     const { kept, unusedExpectErrors } = applyDirectives(analysis.directives, semantic, d => d.range.start.line + 1)
     out.push(...kept)
     for (const directive of unusedExpectErrors) {
         const start = toPosition(directive.line, directive.column)
         out.push({
-            range: { start, end: { line: start.line, character: start.character + "--@luaut-expect-error".length } },
+            range: { start, end: { line: start.line, character: start.character + "--@tilua-expect-error".length } },
             severity: DiagnosticSeverity.Error,
-            source: "luaut",
+            source: "tilua",
             code: "directive",
             message: UNUSED_EXPECT_ERROR,
         })

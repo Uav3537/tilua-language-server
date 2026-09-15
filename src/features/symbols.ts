@@ -1,6 +1,6 @@
 /** Document symbols: the outline of a file. */
 import { SymbolKind, type DocumentSymbol } from "vscode-languageserver"
-import { formatType, type ClassDeclaration, type ClassMember, type Identifier } from "luaut-parser"
+import { formatType, type ClassDeclaration, type ClassMember, type Identifier } from "@tilua/parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
 import { toRange, walk, type Spanned } from "../ast-utils.js"
 

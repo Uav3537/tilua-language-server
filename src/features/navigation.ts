@@ -8,7 +8,7 @@ import {
     type DocumentHighlight, type Location, type Position, type Range,
     type TextEdit, type WorkspaceEdit,
 } from "vscode-languageserver"
-import type { Binding } from "luaut-parser"
+import type { Binding } from "@tilua/parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
 import { pathAt, toRange, type Spanned } from "../ast-utils.js"
 

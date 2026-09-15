@@ -12,7 +12,7 @@
 import { readdirSync } from "node:fs"
 import { dirname, join, relative, resolve } from "node:path"
 import { CompletionItemKind, type CompletionItem, type Position, type TextEdit } from "vscode-languageserver"
-import type { ImportStatement, LuautConfig, Statement } from "luaut-parser"
+import type { ImportStatement, TiluaConfig, Statement } from "@tilua/parser"
 import { pathOfUri, samePath, type Analysis, type Analyzer } from "../analysis.js"
 import { signaturesOf } from "./members.js"
 
@@ -28,7 +28,6 @@ export function importItems(
     if (!from) return []
     const config = analysis.project.config
     const items: CompletionItem[] = []
-    const offered = new Set<string>()
     for (const file of projectFiles(config?.directory ?? dirname(from))) {
         if (samePath(file, from)) continue
         const exports = analyzer.exportsAt(file)
@@ -36,18 +35,21 @@ export function importItems(
         const names = typePosition ? [...exports.types.keys()] : [...exports.values.keys()]
         const specifier = specifierFor(from, file, config)
         for (const name of names) {
-            // One offer per name: two files exporting it would be a guess.
-            if (taken.has(name) || offered.has(name)) continue
-            offered.add(name)
+            if (taken.has(name)) continue
             const type = typePosition ? exports.types.get(name)?.type : exports.values.get(name)
             items.push({
                 label: name,
                 kind: typePosition
                     ? CompletionItemKind.Interface
                     : type && signaturesOf(type).length ? CompletionItemKind.Function : CompletionItemKind.Variable,
+                // Two files can export the same name. Both are offered, each
+                // saying which file it comes from — picking one for the author
+                // would be a guess, and the wrong guess is silent.
                 labelDetails: { description: specifier },
                 detail: `import { ${name} } from "${specifier}"`,
-                sortText: `4${name}`,
+                // Same name, different file: order by file so the list is
+                // stable rather than however the directory was walked.
+                sortText: `4${name} ${specifier}`,
                 additionalTextEdits: [importEdit(analyzer, analysis, file, name, specifier, typePosition)],
             })
         }
@@ -153,9 +155,9 @@ function samePathOrUndefined(a: string | undefined, b: string): boolean {
 
 /** How `from` imports `target`: through a `paths` alias when the relative
  *  path would have to climb out of the folder, else relatively. */
-function specifierFor(from: string, target: string, config: LuautConfig | undefined): string {
+function specifierFor(from: string, target: string, config: TiluaConfig | undefined): string {
     const withoutExtension = (path: string): string => {
-        const bare = path.replace(/\\/g, "/").replace(/\.luaut$/, "")
+        const bare = path.replace(/\\/g, "/").replace(/\.tilua$/, "")
         return bare.endsWith("/index") ? bare.slice(0, -"/index".length) : bare
     }
     let relativePath = withoutExtension(relative(dirname(from), target))
@@ -181,7 +183,7 @@ const FILE_LIMIT = 2000
 const LISTING_TTL = 3000
 const listings = new Map<string, { at: number; files: string[] }>()
 
-/** The project's `.luaut` modules — not definitions files, not
+/** The project's `.tilua` modules — not definitions files, not
  *  `node_modules`, not hidden folders. Listed at most every few seconds. */
 function projectFiles(root: string): string[] {
     const cached = listings.get(root)
@@ -199,7 +201,7 @@ function projectFiles(root: string): string[] {
             if (entry.name.startsWith(".") || entry.name === "node_modules") continue
             const path = join(directory, entry.name)
             if (entry.isDirectory()) walk(path, depth + 1)
-            else if (entry.name.endsWith(".luaut") && !entry.name.endsWith(".d.luaut")) files.push(path)
+            else if (entry.name.endsWith(".tilua") && !entry.name.endsWith(".d.tilua")) files.push(path)
             if (files.length >= FILE_LIMIT) return
         }
     }

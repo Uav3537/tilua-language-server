@@ -4,7 +4,7 @@
  * that exercises `server.ts` — everything else calls the features directly.
  *
  * The server has no types built in, so the conversation happens in a real
- * project folder: a `luaut.config.json` and the type libraries it names.
+ * project folder: a `tilua.config.json` and the type libraries it names.
  */
 import { spawn } from "node:child_process"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -14,16 +14,16 @@ import { dirname, join, resolve } from "node:path"
 
 const here = dirname(fileURLToPath(import.meta.url))
 
-const root = mkdtempSync(join(tmpdir(), "luaut-e2e-"))
+const root = mkdtempSync(join(tmpdir(), "tilua-e2e-"))
 for (const name of ["lua", "roblox"]) {
-    const installed = resolve(here, `../node_modules/@luaut/${name}`)
-    const target = join(root, "node_modules", "@luaut", name)
+    const installed = resolve(here, `../node_modules/@tilua-types/${name}`)
+    const target = join(root, "node_modules", "@tilua-types", name)
     mkdirSync(target, { recursive: true })
-    for (const file of ["package.json", "index.d.luaut"]) {
+    for (const file of ["package.json", "index.d.tilua"]) {
         writeFileSync(join(target, file), readFileSync(join(installed, file), "utf8"))
     }
 }
-writeFileSync(join(root, "luaut.config.json"), JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
+writeFileSync(join(root, "tilua.config.json"), JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
 
 const child = spawn(process.execPath, [resolve(here, "../dist/cli.js"), "--stdio"], {
     stdio: ["pipe", "pipe", "inherit"],
@@ -70,7 +70,7 @@ function notify(method: string, params: unknown): void {
     send({ jsonrpc: "2.0", method, params })
 }
 
-const uri = pathToFileURL(join(root, "e2e.luaut")).href
+const uri = pathToFileURL(join(root, "e2e.tilua")).href
 const failures: string[] = []
 function check(name: string, actual: unknown, expected: unknown): void {
     const a = JSON.stringify(actual)
@@ -86,7 +86,7 @@ notify("initialized", {})
 
 notify("textDocument/didOpen", {
     textDocument: {
-        uri, languageId: "luaut", version: 1,
+        uri, languageId: "tilua", version: 1,
         text: 'const part = Instance.new("Part")\nconst bad: number = "x"\nprint(part.Name)\n',
     },
 })
@@ -97,29 +97,29 @@ const hovered = await request("textDocument/hover", {
 })
 // A *reference* hovers as its narrowed type; the `const` keyword shows on the
 // declaration itself.
-check("hover over the binding", hovered.result?.contents?.value, "```luaut-hover\npart: Part\n```")
+check("hover over the binding", hovered.result?.contents?.value, "```tilua-hover\npart: Part\n```")
 
 // The same hover, a level at a time. An editor that offers to say more asks
 // here; `textDocument/hover` above is the shortest reading for every other.
 notify("textDocument/didOpen", {
     textDocument: {
-        uri: `${uri}#levels`, languageId: "luaut", version: 1,
+        uri: `${uri}#levels`, languageId: "tilua", version: 1,
         text: "type Size = { width: number }\nconst box: Size = { width: 1 }\n",
     },
 })
-const shortest = await request("luaut/hover", {
+const shortest = await request("tilua/hover", {
     textDocument: { uri: `${uri}#levels` },
     position: { line: 1, character: 7 },
 })
 check("verbose hover: opens with the name", [shortest.result?.contents?.value, shortest.result?.canExpand],
-    ["```luaut-hover\nconst box: Size\n```", true])
-const opened = await request("luaut/hover", {
+    ["```tilua-hover\nconst box: Size\n```", true])
+const opened = await request("tilua/hover", {
     textDocument: { uri: `${uri}#levels` },
     position: { line: 1, character: 7 },
     depth: 1,
 })
 check("verbose hover: says more when asked", [opened.result?.contents?.value, opened.result?.canExpand],
-    ["```luaut-hover\nconst box: { width: number }\n```", false])
+    ["```tilua-hover\nconst box: { width: number }\n```", false])
 
 const completed = await request("textDocument/completion", {
     textDocument: { uri },

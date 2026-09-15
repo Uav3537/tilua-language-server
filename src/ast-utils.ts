@@ -1,13 +1,13 @@
 /**
  * Position mapping and AST lookup.
  *
- * luaut spans are 1-based with an exclusive end column; LSP positions are
+ * tilua spans are 1-based with an exclusive end column; LSP positions are
  * 0-based. Every conversion between the two lives here so the features never
  * do the arithmetic themselves.
  */
 import type { Position, Range } from "vscode-languageserver"
 
-/** The shape every luaut AST node shares. */
+/** The shape every tilua AST node shares. */
 export interface Spanned {
     type?: string
     line: { start: number; end: number }

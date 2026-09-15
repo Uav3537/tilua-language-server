@@ -8,7 +8,7 @@
  */
 import type { Position, SignatureHelp, SignatureInformation } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
-import type { Expression } from "luaut-parser"
+import type { Expression } from "@tilua/parser"
 import type { Analyzer, Analysis } from "../analysis.js"
 import { containsPosition, pathAt, type Spanned } from "../ast-utils.js"
 import { signaturesOf, signatureLabel } from "./members.js"

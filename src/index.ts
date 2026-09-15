@@ -1,7 +1,7 @@
 /**
- * luaut-language-server — LSP front end for luaut, built on `luaut-parser`.
+ * @tilua/language-server — LSP front end for tilua, built on `@tilua/parser`.
  *
- * The usual way in is `startServer()` (or the `luaut-language-server` binary).
+ * The usual way in is `startServer()` (or the `@tilua/language-server` binary).
  * The feature functions are exported too: they are plain
  * `(analysis, position) -> answer` functions with no LSP plumbing, so an
  * editor extension can call them directly in-process.
