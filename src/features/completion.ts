@@ -27,6 +27,10 @@ export function completion(
     document: TextDocument,
     position: Position,
 ): CompletionItem[] {
+    // `--@`: the directives a comment can hold.
+    const inDirective = directiveCompletion(document, position)
+    if (inDirective) return inDirective
+
     // A module path or imported name: answered from the other module.
     const inImport = importCompletion(analyzer, document, position)
     if (inImport) return inImport
@@ -82,6 +86,12 @@ export function completion(
     // empty list is honest; the globals are never what was meant there.
     if (operator || !first) return []
 
+    // Directly in a class body, where a member goes. A half-typed word there
+    // is a field with neither type nor value, which does not parse — so the
+    // placeholder is tried as a typed field instead.
+    const members = classMemberItems(analyzer, document.uri, source, start, end, at)
+    if (members) return members
+
     // A key of an object literal written where a type says what belongs in it.
     const keys = objectKeyItems(first.analysis, first.path, source.slice(end))
     if (keys) return keys
@@ -126,6 +136,65 @@ export function completion(
         ...serviceItems(current, taken),
     ]
 }
+
+const DIRECTIVES = [
+    ["tilua-nocheck", "No scope or type errors anywhere in this file"],
+    ["tilua-ignore", "No errors on the next line of code"],
+    ["tilua-expect-error", "No errors on the next line of code, and an error if it has none"],
+] as const
+
+/** After `--@` (or `-- @`) on a line: the directives, or `undefined` when the
+ *  cursor is not there. */
+function directiveCompletion(document: TextDocument, position: Position): CompletionItem[] | undefined {
+    const line = document.getText({ start: { line: position.line, character: 0 }, end: { line: position.line + 1, character: 0 } })
+    const match = /--\s*@([\w-]*)$/.exec(line.slice(0, position.character))
+    if (!match) return undefined
+    const after = /^[\w-]*/.exec(line.slice(position.character))![0]
+    const range = {
+        start: { line: position.line, character: position.character - match[1].length },
+        end: { line: position.line, character: position.character + after.length },
+    }
+    return DIRECTIVES.map(([name, detail]) => ({
+        label: `@${name}`,
+        filterText: name,
+        kind: CompletionItemKind.Keyword,
+        detail,
+        textEdit: { range, newText: name },
+    }))
+}
+
+/** The keywords that start a member, when the cursor is directly in a class
+ *  body — not in a method, where ordinary code goes. `undefined` elsewhere. */
+function classMemberItems(
+    analyzer: Analyzer,
+    uri: string,
+    source: string,
+    start: number,
+    end: number,
+    at: Position,
+): CompletionItem[] | undefined {
+    if (!source.includes("class")) return undefined
+    const patched = source.slice(0, start) + `${PLACEHOLDER}: any` + source.slice(end)
+    const path = pathAt(analyzer.analyze(uri, -1, patched).program, at, true)
+    const index = path.findLastIndex(
+        n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
+    )
+    const field = index > 1 ? path[index - 1] : undefined
+    const owner = index > 1 ? path[index - 2] : undefined
+    if (field?.type !== "ClassField" || (owner?.type !== "ClassDeclaration" && owner?.type !== "ClassExpression")) {
+        return undefined
+    }
+    // Modifiers already written on this line are not offered again, and a
+    // constructor takes none.
+    const lineStart = source.lastIndexOf("\n", start - 1) + 1
+    const written = new Set(source.slice(lineStart, start).split(/\s+/).filter(Boolean))
+    const names = written.size
+        ? MEMBER_KEYWORDS.filter(name => name !== "constructor" && !written.has(name))
+        : MEMBER_KEYWORDS
+    return names.map(name => ({ label: name, kind: CompletionItemKind.Keyword }))
+}
+
+const MEMBER_KEYWORDS = ["constructor", "function", "get", "set", "static", "public", "private"]
 
 /** Completion inside a string literal, or `undefined` when the cursor is not
  *  in one. A string that is a call argument offers the string values its
@@ -392,6 +461,8 @@ function valueItems(analysis: Analysis, at: Position, inFunction: boolean): Comp
         })
     }
     for (const keyword of KEYWORDS) {
+        // `this` inside a method is already a binding.
+        if (seen.has(keyword)) continue
         items.push({ label: keyword, kind: CompletionItemKind.Keyword, sortText: `3${keyword}` })
     }
     return items
@@ -454,8 +525,10 @@ function contextKeywords(before: string): CompletionItem[] {
     return []
 }
 
+/** tilua has no `then` or `end`: blocks are braces. */
 const KEYWORDS = [
-    "const", "let", "function", "return", "if", "then", "elseif", "else", "end",
+    "const", "let", "function", "return", "if", "elseif", "else",
     "for", "in", "while", "do", "repeat", "until", "break", "continue",
-    "type", "declare", "export", "import", "and", "or", "not", "true", "false", "nil",
+    "type", "declare", "export", "import", "class", "new", "this", "super",
+    "and", "or", "not", "true", "false", "nil",
 ]

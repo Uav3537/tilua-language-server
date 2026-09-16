@@ -55,8 +55,9 @@ export function createServer(connection: Connection, options: ServerOptions = {}
             completionProvider: {
                 // `.` and `:` open a member list; the rest of the time
                 // completion is asked for as you type a word.
-                // plus the characters that start or extend an import path.
-                triggerCharacters: [".", ":", "\"", "'", "/"],
+                // plus the characters that start or extend an import path,
+                // and the `@` of a `--@tilua-...` directive.
+                triggerCharacters: [".", ":", "\"", "'", "/", "@"],
                 resolveProvider: false,
             },
             signatureHelpProvider: { triggerCharacters: ["(", ","], retriggerCharacters: [","] },

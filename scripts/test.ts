@@ -288,7 +288,23 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         reach(labelsAt(`${account}}\nconst a = new Account()\na.‸`)), [true, false])
     check("completion: a private member is offered inside its class",
         reach(labelsAt(`${account}    function peek(): number {\n        return this.‸\n    }\n}\n`)), [true, true])
-    contains("completion: `game.` alone on a line", labelsAt(`game.‸\n`), "Workspace")
+    const members = ["constructor", "function", "static", "private"]
+    const offered = (labels: string[]) => members.map(name => labels.includes(name))
+    check("completion: member keywords in a class body",
+        offered(labelsAt(`class A {\n    con‸\n}\n`)), [true, true, true, true])
+    check("completion: member keywords between members",
+        offered(labelsAt(`class A {\n    x = 1\n    ‸\n    function f() {}\n}\n`)), [true, true, true, true])
+    check("completion: member keywords in a class expression",
+        offered(labelsAt(`const B = class {\n    ‸\n}\n`)), [true, true, true, true])
+    check("completion: after a modifier, no constructor and no repeat",
+        offered(labelsAt(`class A {\n    private ‸\n}\n`)), [false, true, true, false])
+    check("completion: a method body is code, not members",
+        labelsAt(`class A {\n    function f() {\n        ‸\n    }\n}\n`).includes("constructor"), false)
+    check("completion: `--@` offers the directives",
+        labelsAt(`--@‸\nconst x = 1\n`), ["@tilua-nocheck", "@tilua-ignore", "@tilua-expect-error"])
+    check("completion: `-- @tilua-ex` still offers them",
+        labelsAt(`const y = 2\n-- @tilua-ex‸\nconst x = 1\n`).length, 3)
+    contains("completion: `game.` alone on a line",labelsAt(`game.‸\n`), "Workspace")
     contains("completion: a chain `game.Workspace.`", labelsAt(`game.Workspace.‸\n`), "Name")
     contains("completion: `:` on a string reaches the string library", labelsAt(`const s = "abc"\ns:‸\n`), "upper")
     check("completion: nothing, rather than globals, when a type has no members",
