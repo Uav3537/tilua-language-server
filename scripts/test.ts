@@ -219,6 +219,12 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("semantic: the class name", classes, "Dog:class.declaration")
     contains("semantic: a superclass", classes, "Instance:class")
     contains("semantic: a class used as a type", classes, "Vector3:class")
+
+    const modifiers = tokensOf(`class A {\n    private static count = 0\n    public get size(): number { return 1 }\n}\n`)
+    contains("semantic: `private` before a member is a keyword", modifiers, "private:keyword")
+    contains("semantic: `static` after `private` is still a keyword", modifiers, "static:keyword")
+    contains("semantic: `public` before an accessor, and the accessor's `get`", modifiers, "public:keyword")
+    contains("semantic: `get` after `public` is still a keyword", modifiers, "get:keyword")
 }
 
 // --- classes -------------------------------------------------------------
@@ -275,6 +281,13 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     }
     check("completion: `obj.` on its own line after a multi-line object",
         labelsAt(`const obj = {\n    a: 1\n}\nobj.‸`), ["a"])
+    // A `private` member is offered only where it can be reached.
+    const account = "class Account {\n    owner = \"a\"\n    private balance = 0\n"
+    const reach = (labels: string[]) => ["owner", "balance"].map(name => labels.includes(name))
+    check("completion: a private member is hidden outside its class",
+        reach(labelsAt(`${account}}\nconst a = new Account()\na.‸`)), [true, false])
+    check("completion: a private member is offered inside its class",
+        reach(labelsAt(`${account}    function peek(): number {\n        return this.‸\n    }\n}\n`)), [true, true])
     contains("completion: `game.` alone on a line", labelsAt(`game.‸\n`), "Workspace")
     contains("completion: a chain `game.Workspace.`", labelsAt(`game.Workspace.‸\n`), "Name")
     contains("completion: `:` on a string reaches the string library", labelsAt(`const s = "abc"\ns:‸\n`), "upper")

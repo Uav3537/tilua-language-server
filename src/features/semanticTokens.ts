@@ -126,7 +126,7 @@ function classify(
             return
         }
 
-        // A class body's own words. `get`, `set`, `static` and `constructor`
+        // A class body's own words. `public`, `private`, `get`, `set`, `static` and `constructor`
         // are ordinary names anywhere else, so they are coloured from the
         // member they open rather than wherever they are written.
         case "ClassMethod":
@@ -136,8 +136,13 @@ function classify(
             const opener = node.type === "ClassConstructor" ? "constructor"
                 : node.type === "ClassAccessor" ? node.kind as string
                 : undefined
-            const words = firstTokensWithin(identifiers, node, 2)
+            const words = firstTokensWithin(identifiers, node, 3)
             let index = 0
+            const accessibility = node.accessibility as string | undefined
+            if (accessibility && words[index] && wordOf(words[index]) === accessibility) {
+                add(words[index], accessibility.length, "keyword")
+                index++
+            }
             if (node.isStatic === true && words[index] && wordOf(words[index]) === "static") {
                 add(words[index], "static".length, "keyword")
                 index++

@@ -73,7 +73,7 @@ export function completion(
         )
         const parent = index > 0 ? path[index - 1] : undefined
         if (parent && (parent.type === "MemberExpression" || parent.type === "MethodCallExpression")) {
-            return memberItems(analysis, parent)
+            return memberItems(analysis, parent, path.slice(0, index - 1))
         }
         first ??= { analysis, path }
     }
@@ -311,7 +311,7 @@ function memberOperator(source: string, wordStart: number): "." | ":" | undefine
     return "."
 }
 
-function memberItems(analysis: Analysis, access: Spanned): CompletionItem[] {
+function memberItems(analysis: Analysis, access: Spanned, ancestors: readonly Spanned[]): CompletionItem[] {
     const object = (access as unknown as { object: Expression }).object
     // `a?.` reads from `a` when it is not nil, and so, in practice, does `a.`
     // on a `T | nil` a check has not narrowed yet: offer what `T` has.
@@ -323,8 +323,12 @@ function memberItems(analysis: Analysis, access: Spanned): CompletionItem[] {
     // be a read of a key the table does not have.
     if (isMethodOnly(type) && !colon) return []
 
+    // A `private` member is only offered inside the class that declared it —
+    // anywhere else, reaching it is an error.
+    const inside = new Set<object>(ancestors.filter(n => n.type === "ClassDeclaration" || n.type === "ClassExpression"))
     return membersOf(type, analysis.types.aliases)
         .filter(member => (colon ? member.isMethod : true))
+        .filter(member => !member.property.private || inside.has(member.property.private.owner))
         .map(member => memberItem(member.name, member.property.type, member.property.readonly))
 }
 
