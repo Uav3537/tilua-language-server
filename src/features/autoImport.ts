@@ -30,7 +30,7 @@ export function importItems(
     const items: CompletionItem[] = []
     for (const file of projectFiles(config?.directory ?? dirname(from))) {
         if (samePath(file, from)) continue
-        const exports = analyzer.exportsAt(file)
+        const exports = analyzer.listedExportsAt(file)
         if (!exports || exports.partial) continue
         const names = typePosition ? [...exports.types.keys()] : [...exports.values.keys()]
         const specifier = specifierFor(from, file, config)

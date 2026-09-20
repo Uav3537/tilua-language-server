@@ -123,7 +123,10 @@ export function signatureLabel(signature: FunctionType): { label: string; parame
         return `${name}${p.optional ? "?" : ""}: ${formatType(p.type)}`
     })
     const generics = signature.typeParams?.length ? `<${signature.typeParams.join(", ")}>` : ""
-    const varargs = signature.varargs ? [`...: ${formatType(signature.varargs)}`] : []
+    // A rest parameter, written the way tilua writes one.
+    const varargs = !signature.varargs ? []
+        : signature.restIsWhole ? [`...args: ${formatType(signature.varargs)}`]
+        : [`...args: ${formatType(signature.varargs)}[]`]
     const label = `${generics}(${[...parameters, ...varargs].join(", ")}) => ${formatType(signature.returns)}`
     return { label, parameters }
 }

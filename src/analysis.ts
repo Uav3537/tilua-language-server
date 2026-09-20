@@ -13,10 +13,11 @@
  * An import is resolved to a file, that file is analyzed the same way, and its
  * exports become the importing file's types. Open documents are read in
  * preference to disk, so an import sees unsaved edits. A cached result is only
- * reused while every file it read — the modules it imports, its config, type
- * libraries and sourcemap — still has the text it was analyzed against.
+ * reused while every file it read — its config, type libraries and sourcemap —
+ * still has the text it was analyzed against, and every module it imports
+ * still exports what it did.
  */
-import { readFileSync, statSync } from "node:fs"
+import { readdirSync, readFileSync, statSync } from "node:fs"
 import { dirname, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
@@ -24,7 +25,7 @@ import {
     findConfig, resolveTypeLibraries, moduleCandidates, sourceMapTypes,
     type Program, type ScopeAnalysis, type TypeAnalysis, type ParseError, type ModuleExports,
     type Binding, type Identifier, type Type, type TiluaConfig, type ConfigProblem, type ProjectHost,
-    type SourceMapTypes, type Directives,
+    type SourceMapTypes, type Directives, type GenericRefType,
 } from "@tilua/parser"
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import { membersOf } from "./features/members.js"
@@ -39,11 +40,15 @@ export interface Analysis {
     readonly directives: Directives
     readonly scopes: ScopeAnalysis
     readonly types: TypeAnalysis
-    /** Every file this analysis read — imported modules, its config, type
+    /** Every file this analysis read other than a module — its config, type
      *  libraries, sourcemap — with the text it read, or `undefined` for a file
-     *  it looked for and did not find. How a cached result tells that something
-     *  changed, appeared or vanished under it. */
+     *  it looked for and did not find (a module included). How a cached result
+     *  tells that something changed, appeared or vanished under it. */
     readonly dependencies: ReadonlyMap<string, string | undefined>
+    /** Each module it imports, by path, with the exports it read from it. A
+     *  module's text can change without its exports changing — an edit inside
+     *  a function body — and then this analysis is still good. */
+    readonly imports: ReadonlyMap<string, ModuleExports>
     /** The project the file belongs to. */
     readonly project: Project
 }
@@ -63,6 +68,17 @@ export interface AnalyzerOptions {
     libs?: readonly Program[]
     /** The open document for a file path, if there is one. */
     openDocument?: (path: string) => TextDocument | undefined
+}
+
+/** The classes a set of definitions declares. */
+function classesOf(libs: readonly Program[]): Set<string> {
+    const names = new Set<string>()
+    for (const lib of libs) {
+        for (const statement of lib.body.statements) {
+            if (statement.type === "DeclareClassStatement") names.add(statement.name.name)
+        }
+    }
+    return names
 }
 
 /** Names a file may use undeclared: whatever the definitions declare. */
@@ -106,14 +122,26 @@ function declarationIndex(analysis: Analysis): Map<object, Binding> {
 // Paths
 // --------------------------------------------------------------------------
 
+// Both conversions below are asked for the same few hundred strings over and
+// over — once per dependency per freshness check — and neither is cheap:
+// `fileURLToPath` and `resolve` together were a third of a keystroke's time.
+// The answers never change, so each string is converted once.
+const pathsOfUris = new Map<string, string | undefined>()
+const pathKeys = new Map<string, string>()
+
 /** A file URI's path, or `undefined` for anything that is not a file. */
 export function pathOfUri(uri: string): string | undefined {
-    if (!uri.startsWith("file:")) return undefined
-    try {
-        return fileURLToPath(uri)
-    } catch {
-        return undefined
+    if (pathsOfUris.has(uri)) return pathsOfUris.get(uri)
+    let path: string | undefined
+    if (uri.startsWith("file:")) {
+        try {
+            path = fileURLToPath(uri)
+        } catch {
+            path = undefined
+        }
     }
+    pathsOfUris.set(uri, path)
+    return path
 }
 
 export function uriOfPath(path: string): string {
@@ -126,9 +154,15 @@ export function samePath(a: string, b: string): boolean {
     return pathKey(a) === pathKey(b)
 }
 
-function pathKey(path: string): string {
-    const normalized = resolve(path)
-    return process.platform === "win32" ? normalized.toLowerCase() : normalized
+/** A path in the one spelling two names of the same file share. */
+export function pathKey(path: string): string {
+    let key = pathKeys.get(path)
+    if (key === undefined) {
+        const normalized = resolve(path)
+        key = process.platform === "win32" ? normalized.toLowerCase() : normalized
+        pathKeys.set(path, key)
+    }
+    return key
 }
 
 /** What an import of a module still being analyzed up the chain sees, when
@@ -152,6 +186,10 @@ interface Run {
     readonly analyzed: Set<string>
     /** Exports from the first pass, read in place of `any` in the second. */
     readonly provisional: Map<string, ModuleExports>
+    /** Modules the first pass analyzed that the second has not redone yet.
+     *  Their first-pass entries stay cached until then, for the second pass
+     *  to compare its exports with. */
+    readonly redo: Set<string>
 }
 
 // --------------------------------------------------------------------------
@@ -161,6 +199,9 @@ interface Run {
 interface Module {
     analysis: Analysis
     exports: ModuleExports
+    /** What `exports` says, in a form two analyses can be compared by — see
+     *  `exportsFingerprint`. `undefined` when it cannot be compared. */
+    fingerprint: string | undefined
 }
 
 /** Everything a folder's files are analyzed with. */
@@ -170,11 +211,19 @@ interface Context {
     readonly libs: readonly Program[]
     readonly globals: readonly string[]
     readonly sourceMap?: SourceMapTypes
+    /** The classes the libraries declare. */
+    readonly libraryClasses: ReadonlySet<string>
     /** Every file read to build this, with what it held. */
     readonly reads: ReadonlyMap<string, string | undefined>
+    /** Every folder listed to build this — a `"@tilua-types/*"` in `types` —
+     *  with the names it held, so installing a library is noticed. */
+    readonly listings: ReadonlyMap<string, string | undefined>
 }
 
-const NO_PROJECT: Context = { project: { fixed: false, problems: [] }, libs: [], globals: [], reads: new Map() }
+const NO_PROJECT: Context = {
+    project: { fixed: false, problems: [] }, libs: [], globals: [], libraryClasses: new Set(), reads: new Map(),
+    listings: new Map(),
+}
 
 export class Analyzer {
     private readonly fixed?: Context
@@ -198,7 +247,9 @@ export class Analyzer {
                 project: { fixed: true, problems: [] },
                 libs: options.libs,
                 globals: globalsOf(options.libs),
+                libraryClasses: classesOf(options.libs),
                 reads: new Map(),
+                listings: new Map(),
             }
         }
     }
@@ -211,8 +262,29 @@ export class Analyzer {
         if (cached && cached.version === document.version && cached.source === source && this.isFresh(cached)) {
             return cached
         }
-        const analysis = this.analyze(document.uri, document.version, source)
+        const analysis = this.asModule(document, source) ?? this.analyze(document.uri, document.version, source)
         this.cache.set(document.uri, analysis)
+        return analysis
+    }
+
+    /** The analysis another file's import already made of this text, as the
+     *  document's own — so a module opened after something imported it, or
+     *  imported after it was opened, is analyzed once rather than once each
+     *  way. `undefined` when there is none, or it is out of date. */
+    private asModule(document: TextDocument, source: string): Analysis | undefined {
+        const path = pathOfUri(document.uri)
+        const module = path ? this.modules.get(pathKey(path)) : undefined
+        if (!module || module.analysis.source !== source || !this.isFresh(module.analysis)) return undefined
+        // The URI the editor spells the file with, which is what every answer
+        // about the document is sent back with.
+        return { ...module.analysis, uri: document.uri, version: document.version }
+    }
+
+    /** The document analysis `get` made of `path`'s text, if it is still good. */
+    private asDocument(path: string, source: string): Analysis | undefined {
+        const open = this.openDocument?.(path)
+        const analysis = open ? this.cache.get(open.uri) : undefined
+        if (!analysis || analysis.source !== source || !this.isFresh(analysis)) return undefined
         return analysis
     }
 
@@ -253,6 +325,20 @@ export class Analyzer {
         })
     }
 
+    /** What the module at `path` exports, to list the names it offers: the
+     *  last analysis for as long as the file's own text is the same, even when
+     *  something it imports has changed since.
+     *
+     *  Completion lists every module's exports on every keystroke, and the
+     *  file being typed in is imported by some of them — checking them in
+     *  full would re-analyze each of those, each time, to list names the edit
+     *  cannot have changed. The sweep that follows the typing catches them up. */
+    listedExportsAt(path: string): ModuleExports | undefined {
+        const cached = this.modules.get(pathKey(path))
+        if (cached && cached.analysis.source === this.readFile(path)) return cached.exports
+        return this.exportsAt(path)
+    }
+
     /** The analysis of the module at `path`, analyzing it if need be. */
     moduleAt(path: string): Analysis | undefined {
         this.exportsAt(path)
@@ -267,23 +353,35 @@ export class Analyzer {
      *  now, or `undefined` outside one. */
     private stampsThisSweep?: Map<string, { mtimeMs: number; size: number }>
 
-    /** Runs one sweep over the open files, during which each path is `stat`ed
-     *  at most once.
+    /** Whether each analysis was found fresh during the sweep going on now. */
+    private freshThisSweep?: Map<Analysis, boolean>
+
+    /** What each folder held during the sweep going on now. */
+    private listingsThisSweep?: Map<string, string[] | undefined>
+
+    /** Runs one sweep over the open files — or one request about one of them
+     *  — during which each path is `stat`ed at most once and each analysis is
+     *  checked for freshness at most once.
      *
      *  Re-checking every open file asks about the same handful of type
      *  libraries and modules once per file — thousands of `stat` calls over a
-     *  project of any size. A sweep is synchronous, so nothing on disk can move
-     *  in the middle of one and the first answer stands for the rest of it.
-     *  Outside a sweep every path is read afresh, so a file written and then
-     *  asked about is seen. */
+     *  project of any size — and completion asks for every module of the
+     *  project to list what could be imported. A sweep is synchronous, so
+     *  nothing on disk or in the editor can move in the middle of one and the
+     *  first answer stands for the rest of it. Outside a sweep every path is
+     *  read afresh, so a file written and then asked about is seen. */
     sweep<T>(run: () => T): T {
         // A nested call belongs to the sweep already running.
         if (this.stampsThisSweep) return run()
         this.stampsThisSweep = new Map()
+        this.freshThisSweep = new Map()
+        this.listingsThisSweep = new Map()
         try {
             return run()
         } finally {
             this.stampsThisSweep = undefined
+            this.freshThisSweep = undefined
+            this.listingsThisSweep = undefined
         }
     }
 
@@ -342,7 +440,7 @@ export class Analyzer {
         if (!path) return NO_PROJECT
         const key = pathKey(dirname(path))
         const cached = this.contexts.get(key)
-        if (cached && this.unchanged(cached.reads)) return cached
+        if (cached && this.unchanged(cached.reads) && this.sameListings(cached.listings)) return cached
         const context = this.buildContext(path)
         this.contexts.set(key, context)
         return context
@@ -350,18 +448,24 @@ export class Analyzer {
 
     private buildContext(path: string): Context {
         const reads = new Map<string, string | undefined>()
+        const listings = new Map<string, string | undefined>()
         const host: ProjectHost = {
             readFile: file => {
                 const text = this.readFile(file)
                 reads.set(file, text)
                 return text
             },
+            readDirectory: directory => {
+                const names = this.listDirectory(directory)
+                listings.set(directory, names?.join("\n"))
+                return names
+            },
         }
 
         const lookup = findConfig(path, host)
         const problems: ConfigProblem[] = [...lookup.problems]
         const config = lookup.config
-        if (!config) return { project: { fixed: false, problems }, libs: [], globals: [], reads }
+        if (!config) return { ...NO_PROJECT, project: { fixed: false, problems }, reads, listings }
 
         const libraries = resolveTypeLibraries(config, host)
         problems.push(...libraries.problems)
@@ -388,7 +492,10 @@ export class Analyzer {
             }
         }
 
-        return { project: { config, fixed: false, problems }, libs, globals: globalsOf(libs), sourceMap, reads }
+        return {
+            project: { config, fixed: false, problems },
+            libs, globals: globalsOf(libs), libraryClasses: classesOf(libs), sourceMap, reads, listings,
+        }
     }
 
     /** A type library's definitions, parsed once per text. */
@@ -437,6 +544,29 @@ export class Analyzer {
         return result
     }
 
+    /** Does every folder still hold the names it did? */
+    private sameListings(listings: ReadonlyMap<string, string | undefined>): boolean {
+        for (const [directory, names] of listings) if (this.listDirectory(directory)?.join("\n") !== names) return false
+        return true
+    }
+
+    /** The folders in a folder, listed at most once a sweep, like `stamp`. */
+    private listDirectory(directory: string): string[] | undefined {
+        const known = this.listingsThisSweep?.get(directory)
+        if (known !== undefined || this.listingsThisSweep?.has(directory)) return known
+        let names: string[] | undefined
+        try {
+            names = readdirSync(directory, { withFileTypes: true })
+                .filter(entry => entry.isDirectory() || entry.isSymbolicLink())
+                .map(entry => entry.name)
+                .sort()
+        } catch {
+            names = undefined
+        }
+        this.listingsThisSweep?.set(directory, names)
+        return names
+    }
+
     private unchanged(reads: ReadonlyMap<string, string | undefined>): boolean {
         for (const [file, text] of reads) if (this.readFile(file) !== text) return false
         return true
@@ -453,7 +583,7 @@ export class Analyzer {
         analyzeRoot: () => { result: T; exports: () => ModuleExports | undefined },
     ): T {
         if (this.run) return analyzeRoot().result
-        const run: Run = { cycles: new Set(), analyzed: new Set(), provisional: new Map() }
+        const run: Run = { cycles: new Set(), analyzed: new Set(), provisional: new Map(), redo: new Set() }
         this.run = run
         try {
             const first = analyzeRoot()
@@ -465,8 +595,12 @@ export class Analyzer {
             }
             // Anything the first pass analyzed may have read `any` through the
             // cycle, so all of it is redone.
-            for (const key of run.analyzed) this.modules.delete(key)
-            return analyzeRoot().result
+            for (const key of run.analyzed) run.redo.add(key)
+            const second = analyzeRoot().result
+            // What the second pass never came back to is still the first
+            // pass's, `any` and all.
+            for (const key of run.redo) this.modules.delete(key)
+            return second
         } finally {
             this.run = undefined
         }
@@ -497,6 +631,7 @@ export class Analyzer {
         const reportUndeclared = context.libs.length > 0
         const scopes = analyzeScopes(program, { builtinGlobals: [...globals], reportUndeclared })
         const dependencies = new Map(context.reads)
+        const imports = new Map<string, ModuleExports>()
         const types = analyzeTypes(program, scopes, {
             libs,
             reportUnknownTypes: reportUndeclared,
@@ -513,11 +648,14 @@ export class Analyzer {
                     return undefined
                 }
                 const exports = this.exportsOf(target, importing)
-                dependencies.set(target, this.readFile(target))
+                if (exports) imports.set(target, exports)
                 return exports
             },
         })
-        return { uri, version, source, program, parseErrors: errors, directives, scopes, types, dependencies, project: context.project }
+        return {
+            uri, version, source, program, parseErrors: errors, directives, scopes, types,
+            dependencies, imports, project: context.project,
+        }
     }
 
     private exportsOf(path: string, importing: Set<string>): ModuleExports | undefined {
@@ -529,12 +667,21 @@ export class Analyzer {
         const source = this.readFile(path)
         if (source === undefined) return undefined
         const cached = this.modules.get(key)
-        if (cached && cached.analysis.source === source && this.isFresh(cached.analysis)) return cached.exports
+        if (cached && !this.run?.redo.has(key) && cached.analysis.source === source && this.isFresh(cached.analysis)) {
+            return cached.exports
+        }
         importing.add(key)
         try {
-            const analysis = this.analyzeModule(uriOfPath(path), -1, source, importing)
-            const exports = this.exportsFrom(analysis, importing)
-            this.modules.set(key, { analysis, exports })
+            const analysis = this.asDocument(path, source) ?? this.analyzeModule(uriOfPath(path), -1, source, importing)
+            let exports = this.exportsFrom(analysis, importing)
+            const fingerprint = exports.partial
+                ? undefined
+                : exportsFingerprint(exports, this.contextFor(path).libraryClasses)
+            // The same exports as before, come to again: the modules that
+            // read the old ones read exactly this, so they stay as they are.
+            if (fingerprint !== undefined && cached?.fingerprint === fingerprint) exports = cached.exports
+            this.modules.set(key, { analysis, exports, fingerprint })
+            this.run?.redo.delete(key)
             this.run?.analyzed.add(key)
             return exports
         } finally {
@@ -544,16 +691,136 @@ export class Analyzer {
 
     /** Does every file `analysis` read — and everything the modules it
      *  imported read — still have the text it was analyzed against? */
-    private isFresh(analysis: Analysis, seen = new Set<Analysis>()): boolean {
+    private isFresh(analysis: Analysis): boolean {
+        const known = this.freshThisSweep?.get(analysis)
+        if (known !== undefined) return known
+        const seen = new Set<Analysis>()
+        const fresh = this.isFreshWalk(analysis, seen)
+        // Every module the walk reached was checked in full, so a fresh root
+        // vouches for all of them. A stale one says nothing about the modules
+        // visited before it was found — only about itself.
+        if (fresh) for (const visited of seen) this.freshThisSweep?.set(visited, true)
+        else this.freshThisSweep?.set(analysis, false)
+        return fresh
+    }
+
+    /** A module met again on the way is assumed fresh — it is being checked
+     *  further up — which is why only the root's verdict is kept. */
+    private isFreshWalk(analysis: Analysis, seen: Set<Analysis>): boolean {
         if (seen.has(analysis)) return true
+        const known = this.freshThisSweep?.get(analysis)
+        if (known !== undefined) return known
         seen.add(analysis)
         for (const [path, source] of analysis.dependencies) {
             if (this.readFile(path) !== source) return false
-            const module = this.modules.get(pathKey(path))
-            if (module && !this.isFresh(module.analysis, seen)) return false
+        }
+        for (const [path, exports] of analysis.imports) {
+            if (this.currentExports(path, seen) !== exports) return false
         }
         return true
     }
+
+    /** What the module at `path` exports now, as far as a freshness check can
+     *  tell. A module whose own text or imports changed is analyzed again —
+     *  its exports may well have come out the same, and if so everything that
+     *  imports it is still good. Inside an analysis run that is left to the
+     *  run, which is analyzing whatever is out of date already; a changed
+     *  module then reads as `undefined`, which no recorded export equals. */
+    private currentExports(path: string, seen: Set<Analysis>): ModuleExports | undefined {
+        const key = pathKey(path)
+        const module = this.run?.redo.has(key) ? undefined : this.modules.get(key)
+        if (module && module.analysis.source === this.readFile(path) && this.isFreshWalk(module.analysis, seen)) {
+            return module.exports
+        }
+        return this.run ? undefined : this.exportsAt(path)
+    }
+}
+
+/**
+ * Everything a module's exports say, as a string: equal strings, equal
+ * exports, as far as any module importing them could tell.
+ *
+ * Types are plain data, so this is a walk over the objects, with a number
+ * standing in for one already written — types are recursive. What it leaves
+ * out is only what cannot differ: a library class is written as its name,
+ * since the libraries are the same for both analyses or the importing module
+ * would be out of date anyway (and writing one out would write the engine);
+ * a `private` member's owner is a node, told apart by identity alone. A ref
+ * to an alias is written with what the alias resolves to in the module that
+ * wrote it, which is where the alias's own changes show.
+ *
+ * Something too big to be worth comparing gives `undefined`.
+ */
+function exportsFingerprint(exports: ModuleExports, libraryClasses: ReadonlySet<string>): string | undefined {
+    const LIMIT = 200_000
+    const out: string[] = []
+    const ids = new Map<object, number>()
+    const expanding = new Set<string>()
+    const idOf = (value: object): number => {
+        let id = ids.get(value)
+        if (id === undefined) ids.set(value, id = ids.size)
+        return id
+    }
+    const write = (value: unknown): boolean => {
+        if (out.length > LIMIT) return false
+        if (value === null || typeof value !== "object") {
+            out.push(typeof value === "function" ? "fn" : value === undefined ? "u" : JSON.stringify(value))
+            return true
+        }
+        const seen = ids.get(value)
+        if (seen !== undefined) {
+            out.push(`#${seen}`)
+            return true
+        }
+        idOf(value)
+        if (value instanceof Map) {
+            out.push("M{")
+            for (const [key, entry] of value) {
+                out.push(String(key), ":")
+                if (!write(entry)) return false
+            }
+            out.push("}")
+            return true
+        }
+        if (Array.isArray(value)) {
+            out.push("[")
+            for (const entry of value) if (!write(entry)) return false
+            out.push("]")
+            return true
+        }
+        const record = value as Record<string, unknown>
+        if (record.kind === "object" && record.class) {
+            const info = record.class as { name: string; typeArguments?: unknown }
+            if (libraryClasses.has(info.name)) {
+                out.push(`C:${info.name}`)
+                return write(info.typeArguments)
+            }
+        }
+        if (record.kind === "genericRef" && record.origin) {
+            const ref = record as unknown as GenericRefType
+            const key = `${idOf(ref.origin!)}:${ref.name}`
+            out.push(`R:${ref.name}<`)
+            if (!write(ref.typeArguments)) return false
+            out.push(">")
+            if (expanding.has(key)) return true
+            expanding.add(key)
+            try {
+                return write(ref.origin!.expand(ref))
+            } finally {
+                expanding.delete(key)
+            }
+        }
+        out.push("{")
+        for (const key of Object.keys(record)) {
+            if (key === "origin" || key === "owner") continue
+            out.push(key, "=")
+            if (!write(record[key])) return false
+        }
+        out.push("}")
+        return true
+    }
+    const whole = { values: exports.values, types: exports.types, default: exports.default }
+    return write(whole) ? out.join(" ") : undefined
 }
 
 /** The type aliases a set of libraries defines, resolved. */

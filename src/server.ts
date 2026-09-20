@@ -11,7 +11,7 @@ import {
 } from "vscode-languageserver/node"
 import { TextDocument } from "vscode-languageserver-textdocument"
 import type { ConfigProblem } from "@tilua/parser"
-import { Analyzer, pathOfUri, samePath, uriOfPath, type Analysis, type AnalyzerOptions } from "./analysis.js"
+import { Analyzer, pathKey, pathOfUri, uriOfPath, type Analysis, type AnalyzerOptions } from "./analysis.js"
 import { importDefinition } from "./features/imports.js"
 import { diagnostics } from "./features/diagnostics.js"
 import { hover } from "./features/hover.js"
@@ -34,13 +34,23 @@ const IDLE_MS = 250
 export function createServer(connection: Connection, options: ServerOptions = {}): void {
     const documents = new TextDocuments(TextDocument)
     // Imports and configs read open documents before disk, so they see
-    // unsaved edits.
+    // unsaved edits. This is asked for every dependency of every file checked,
+    // so the open documents are kept by path rather than searched.
+    const openUris = new Map<string, string>()
+    documents.onDidOpen(e => {
+        const path = pathOfUri(e.document.uri)
+        if (path) openUris.set(pathKey(path), e.document.uri)
+    })
+    documents.onDidClose(e => {
+        const path = pathOfUri(e.document.uri)
+        if (path && openUris.get(pathKey(path)) === e.document.uri) openUris.delete(pathKey(path))
+    })
     const analyzer = new Analyzer({
         ...options,
-        openDocument: path => documents.all().find(document => {
-            const documentPath = pathOfUri(document.uri)
-            return documentPath !== undefined && samePath(documentPath, path)
-        }),
+        openDocument: path => {
+            const uri = openUris.get(pathKey(path))
+            return uri === undefined ? undefined : documents.get(uri)
+        },
     })
 
     connection.onInitialize((_params: InitializeParams): InitializeResult => ({
@@ -69,10 +79,9 @@ export function createServer(connection: Connection, options: ServerOptions = {}
     }))
 
     // --- semantic highlighting ---------------------------------------------
-    connection.languages.semanticTokens.on(p => {
-        const document = documents.get(p.textDocument.uri)
-        return document ? semanticTokens(analyzer.get(document)) : { data: [] }
-    })
+    connection.languages.semanticTokens.on(p => withDocument(
+        p.textDocument.uri, d => semanticTokens(analyzer.get(d)), { data: [] },
+    ))
 
     // --- diagnostics -------------------------------------------------------
     /** Config files currently showing problems, so fixed ones get cleared. */
@@ -170,9 +179,11 @@ export function createServer(connection: Connection, options: ServerOptions = {}
     })
 
     // --- language features -------------------------------------------------
-    const withDocument = <T>(uri: string, f: (document: TextDocument) => T, fallback: T): T => {
+    // A request is answered synchronously, so it is a sweep of its own: every
+    // file it reads is looked at once, however many modules ask about it.
+    function withDocument<T>(uri: string, f: (document: TextDocument) => T, fallback: T): T {
         const document = documents.get(uri)
-        return document ? f(document) : fallback
+        return document ? analyzer.sweep(() => f(document)) : fallback
     }
 
     connection.onHover(p => withDocument(

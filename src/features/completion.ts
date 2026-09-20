@@ -194,7 +194,10 @@ function classMemberItems(
     return names.map(name => ({ label: name, kind: CompletionItemKind.Keyword }))
 }
 
-const MEMBER_KEYWORDS = ["constructor", "function", "get", "set", "static", "public", "private"]
+const MEMBER_KEYWORDS = [
+    "constructor", "function", "get", "set", "static", "public", "private", "protected",
+    "readonly", "abstract", "override",
+]
 
 /** Completion inside a string literal, or `undefined` when the cursor is not
  *  in one. A string that is a call argument offers the string values its
@@ -529,6 +532,6 @@ function contextKeywords(before: string): CompletionItem[] {
 const KEYWORDS = [
     "const", "let", "function", "return", "if", "elseif", "else",
     "for", "in", "while", "do", "repeat", "until", "break", "continue",
-    "type", "declare", "export", "import", "class", "new", "this", "super",
+    "type", "declare", "export", "import", "class", "abstract", "this", "super",
     "and", "or", "not", "true", "false", "nil",
 ]

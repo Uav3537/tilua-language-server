@@ -7,7 +7,7 @@ import { mkdirSync, writeFileSync, rmSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { TextDocument } from "vscode-languageserver-textdocument"
-import { Analyzer } from "../src/analysis.js"
+import { Analyzer, pathKey } from "../src/analysis.js"
 import { diagnostics } from "../src/features/diagnostics.js"
 
 const FILES = Number(process.env.FILES ?? 10)
@@ -33,7 +33,9 @@ for (let i = 0; i < FILES; i++) {
 }
 
 let docs: TextDocument[] = []
-const analyzer = new Analyzer({ openDocument: p => docs.find(d => d.uri === pathToFileURL(p).href) })
+// Kept by path, as the server keeps its open documents.
+const byPath = new Map(paths.map((p, i) => [pathKey(p), i]))
+const analyzer = new Analyzer({ openDocument: p => { const i = byPath.get(pathKey(p)); return i === undefined ? undefined : docs[i] } })
 docs = paths.map(p => TextDocument.create(pathToFileURL(p).href, "tilua", 1, readFileSync(p, "utf8")))
 
 function sweep(): number {

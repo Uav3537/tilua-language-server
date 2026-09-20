@@ -175,7 +175,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         return out
     }
 
-    const conditional = tokensOf(`type Ret<T> = T extends (...unknown) => infer R ? R : never\n`)
+    const conditional = tokensOf(`type Ret<T> = T extends (...args: unknown[]) => infer R ? R : never\n`)
     contains("semantic: `extends` in a conditional is a keyword", conditional, "extends:keyword")
     contains("semantic: `type` declaring an alias is a keyword", conditional, "type:keyword")
     contains("semantic: the alias name", conditional, "Ret:type.declaration")
@@ -214,7 +214,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains(`semantic: a quoted key with a space, too`, quoted, `"my key":property.declaration`)
     contains(`semantic: an unquoted key is unchanged`, quoted, "plain:property.declaration")
 
-    const classes = tokensOf(`declare class Dog extends Instance { Bark: (self: Dog) => () }\nconst d: Dog = nil as any\nconst p: Vector3 = Vector3.new()\n`)
+    const classes = tokensOf(`declare class Dog extends Instance { Bark: (self: Dog) => nil }\nconst d: Dog = nil as any\nconst p: Vector3 = Vector3.new()\n`)
     contains("semantic: `class` in a declaration is a keyword", classes, "class:keyword")
     contains("semantic: the class name", classes, "Dog:class.declaration")
     contains("semantic: a superclass", classes, "Instance:class")
@@ -225,6 +225,13 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("semantic: `static` after `private` is still a keyword", modifiers, "static:keyword")
     contains("semantic: `public` before an accessor, and the accessor's `get`", modifiers, "public:keyword")
     contains("semantic: `get` after `public` is still a keyword", modifiers, "get:keyword")
+
+    const abstracts = tokensOf("type Named = { id: number }\nabstract class B implements Named {\n"
+        + "    static protected readonly id = 1\n    abstract function f(): number\n}\n"
+        + "class C extends B {\n    override protected function f(): number { return 1 }\n}\n")
+    for (const word of ["abstract", "implements", "protected", "readonly", "override", "static"]) {
+        contains(`semantic: \`${word}\` is a keyword, in whatever order the modifiers are written`, abstracts, `${word}:keyword`)
+    }
 }
 
 // --- classes -------------------------------------------------------------
@@ -244,13 +251,13 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         hoverText(`const s: ReplicatedSto‸rage = game:GetService("ReplicatedStorage")\n`),
         "declare class ReplicatedStorage extends Instance {}")
     check("classes: hovering a declaration",
-        hoverText(`declare class Do‸g extends Instance { Bark: (self: Dog) => () }\n`),
-        "declare class Dog extends Instance {\n    Bark: (self: Dog) => (),\n}")
+        hoverText(`declare class Do‸g extends Instance { Bark: (self: Dog) => nil }\n`),
+        "declare class Dog extends Instance {\n    Bark: (self: Dog) => nil,\n}")
     const diagnosticsOf = (src: string): string[] => diagnostics(analyzer.get(open(src).document)).map(d => d.message)
     check("classes: a table is not an Instance, and a sibling class is not either",
         diagnosticsOf(`const a: Instance = { Name: "x" }\nconst b: Part = game:GetService("Players")\n`),
-        ["Type '{ Name: string }' is not assignable to 'Instance', missing Changed, ClassName, GetPropertyChangedSignal and 47 more",
-            "Type 'Players' is not assignable to 'Part', missing GetPivot, PivotTo, Anchored and 72 more"])
+        ["Type '{ Name: string }' is not assignable to 'Instance', missing Changed, ClassName, GetPropertyChangedSignal and 48 more",
+            "Type 'Players' is not assignable to 'Part', missing GetPivot, PivotTo, GetRootPart and 76 more"])
     const { document, cursor } = open(`const part = Instance.new("Part")\npart.‸`)
     const labels = completion(analyzer, document, cursor).map(i => i.label)
     contains("classes: inherited members complete", labels, "Name")
@@ -285,7 +292,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const account = "class Account {\n    owner = \"a\"\n    private balance = 0\n"
     const reach = (labels: string[]) => ["owner", "balance"].map(name => labels.includes(name))
     check("completion: a private member is hidden outside its class",
-        reach(labelsAt(`${account}}\nconst a = new Account()\na.‸`)), [true, false])
+        reach(labelsAt(`${account}}\nconst a = Account.new()\na.‸`)), [true, false])
     check("completion: a private member is offered inside its class",
         reach(labelsAt(`${account}    function peek(): number {\n        return this.‸\n    }\n}\n`)), [true, true])
     const members = ["constructor", "function", "static", "private"]
@@ -311,7 +318,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const xs = [1, 2]\nxs.‸\n`), [])
     check("completion: `..` is concatenation, not member access",
         labelsAt(`const alpha = 1\nprint("a" ..‸)\n`).includes("alpha"), true)
-    const maybe = `type Part = { Name: string, Destroy: (self: Part) => () }\ndeclare part: Part | nil\n`
+    const maybe = `type Part = { Name: string, Destroy: (self: Part) => nil }\ndeclare part: Part | nil\n`
     check("completion: `?.` offers the members of the non-nil type",
         labelsAt(`${maybe}part?.‸\n`).sort(), ["Destroy", "Name"])
     check("completion: `?:` offers its methods",
@@ -339,7 +346,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("completion: the keys an annotation names, minus those already written",
         labelsAt(`${shape}const s: Shape = {\n    width: 1,\n    ‸\n}\n`).sort(), ["height", "label"])
     check("completion: the keys a parameter names",
-        labelsAt(`${shape}declare function take(s: Shape): ()\ntake({\n    ‸\n})\n`).sort(), ["height", "label", "width"])
+        labelsAt(`${shape}declare function take(s: Shape): nil\ntake({\n    ‸\n})\n`).sort(), ["height", "label", "width"])
     check("completion: a mapped type's keys",
         labelsAt(`type Names = "a" | "b"\nconst m = {\n    ‸\n} satisfies { [K in Names]: number }\n`).sort(), ["a", "b"])
     check("completion: a nested literal's keys",
@@ -427,7 +434,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     }
     const names = `type Names = "GTFrisk" | "XTFrisk"\n`
     check("completion: the keys a finite index signature covers",
-        labelsAt(`${names}const perClass = {\n    ‸\n} as const satisfies { [Names]: () => () }\n`).sort(),
+        labelsAt(`${names}const perClass = {\n    ‸\n} as const satisfies { [Names]: () => nil }\n`).sort(),
         ["GTFrisk", "XTFrisk"])
     // `[string]` names no key in particular, so nothing replaces the ordinary
     // suggestions there.
@@ -541,10 +548,10 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
             ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
-    check("hover: `...` is what the function declared it takes",
-        hoverText(`function f(...: number) {\n    print(‸...)\n}\n`), "(vararg) ...: number")
-    check("hover: an undeclared `...`",
-        hoverText(`function f(...) {\n    print(‸...)\n}\n`), "(vararg) ...: any")
+    check("hover: a rest parameter is the array it collects",
+        hoverText(`function f(...numbers: number[]) {\n    print(numb‸ers)\n}\n`)?.includes("numbers: number[]"), true)
+    check("diagnostics: bare `...` is a syntax error that says what to write",
+        diagnostics(analyzer.get(open(`function f(...) {}\n`).document)).some(d => d.message.startsWith("tilua has no bare '...'")), true)
 }
 
 // --- hover inside a destructuring pattern --------------------------------
@@ -903,6 +910,81 @@ print(later)
     rmSync(root, { recursive: true, force: true })
 }
 
+// --- editing an imported module ----------------------------------------
+// An importer is re-analyzed when what it imports changes, not whenever the
+// text of the module does: typing inside a function body leaves it alone.
+{
+    const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { dirname, join } = await import("node:path")
+    const { pathToFileURL } = await import("node:url")
+
+    const root = mkdtempSync(join(tmpdir(), "tilua-edits-"))
+    const initial: Record<string, string> = {
+        "lib.tilua": `export function twice(n: number): number {\n    return n * 2\n}\n`
+            + `export class Counter {\n    count: number = 0\n}\n`
+            + `type Inner = { depth: number }\nexport type Tree = { inner: Inner, children: Tree[] }\n`,
+        "user.tilua": `import { twice, Counter, Tree } from "./lib"\nconst n: number = twice(1)\n`
+            + `const c = Counter.new()\nconst k: number = c.count\nprint(n, k)\nconst t: Tree = { inner: { depth: 1 }, children: [] }\nprint(t)\n`,
+        "cycle/a.tilua": `import { fromB } from "./b"\nexport function fromA(): number {\n    return 1\n}\nprint(fromB())\n`,
+        "cycle/b.tilua": `import { fromA } from "./a"\nexport function fromB(): number {\n    return fromA()\n}\n`,
+    }
+    const open = new Map<string, TextDocument>()
+    for (const [path, text] of Object.entries(initial)) {
+        mkdirSync(dirname(join(root, path)), { recursive: true })
+        writeFileSync(join(root, path), text)
+        const uri = pathToFileURL(join(root, path)).href
+        open.set(uri, TextDocument.create(uri, "tilua", 1, text))
+    }
+    const edits = new Analyzer({ libs: testLibs, openDocument: path => open.get(pathToFileURL(path).href) })
+    const doc = (path: string): TextDocument => open.get(pathToFileURL(join(root, path)).href)!
+    const type = (path: string, from: string, to: string): void => {
+        const document = doc(path)
+        const text = document.getText()
+        if (!text.includes(from)) throw new Error(`${from} not in ${path}`)
+        open.set(document.uri, TextDocument.create(document.uri, "tilua", document.version + 1, text.replace(from, to)))
+    }
+    const sweep = (): void => edits.sweep(() => { for (const document of open.values()) edits.get(document) })
+    const messages = (path: string): string[] => diagnostics(edits.get(doc(path))).map(d => d.message)
+
+    sweep()
+    check("edits: the importer starts clean", messages("user.tilua"), [])
+    const before = edits.get(doc("user.tilua"))
+    type("lib.tilua", "return n * 2", "return n * 2 + 0")
+    sweep()
+    check("edits: a change inside a function body keeps the importer's analysis",
+        edits.get(doc("user.tilua")) === before, true)
+
+    type("lib.tilua", "twice(n: number): number", "twice(n: number): string")
+    type("lib.tilua", "return n * 2 + 0", "return \"x\"")
+    sweep()
+    check("edits: a changed signature re-checks the importer", messages("user.tilua"),
+        ["Type 'string' is not assignable to 'number'"])
+
+    type("lib.tilua", "count: number = 0", "count: string = \"\"")
+    sweep()
+    check("edits: a class member's type reaches the importer",
+        messages("user.tilua").filter(m => m === "Type 'string' is not assignable to 'number'").length, 2)
+    type("lib.tilua", "depth: number", "depth: string")
+    sweep()
+    check("edits: an alias the export only refers to reaches the importer",
+        messages("user.tilua").some(m => m.includes("not assignable")), true)
+
+    // Both sides of a cycle are redone whenever one of them is (see `Run`);
+    // what matters is that it then settles, rather than going round again on
+    // every sweep because one side keeps seeing new exports from the other.
+    type("cycle/a.tilua", "return 1", "return 2")
+    sweep()
+    const settledA = edits.get(doc("cycle/a.tilua"))
+    const settledB = edits.get(doc("cycle/b.tilua"))
+    sweep()
+    check("edits: a cycle settles after an edit",
+        edits.get(doc("cycle/a.tilua")) === settledA && edits.get(doc("cycle/b.tilua")) === settledB, true)
+    check("edits: and is still checked", messages("cycle/a.tilua"), [])
+
+    rmSync(root, { recursive: true, force: true })
+}
+
 // --- projects ----------------------------------------------------------
 // Real folders: configs, installed type libraries, aliases and a sourcemap.
 {
@@ -957,6 +1039,19 @@ print(later)
     check("projects: types, a paths alias and the sourcemap all apply — only the deliberate error remains",
         mainMessages.length === 1 && mainMessages[0].endsWith("is not assignable to 'string'"), true)
 
+    // `@tilua-types/*` and a library of the project's own, published under
+    // any name; one installed later is picked up without a restart.
+    put("wild/tilua.config.json", JSON.stringify({ types: ["@tilua-types/*", "house-types"] }))
+    put("node_modules/house-types/index.d.tilua", "declare house: number\n")
+    const wildText = "const p: Part = nil as any\nconst h: number = house\nconst f: number = fresh\n"
+    const wild = projects.sweep(() => projects.get(openFile("wild/x.tilua", wildText)))
+    check("projects: `@tilua-types/*` loads every installed one, and a name outside it is its own package",
+        diagnostics(wild).map(d => d.message), ["Cannot find name 'fresh'"])
+    put("node_modules/@tilua-types/fresh/index.d.tilua", "declare fresh: number\n")
+    const refreshed = projects.sweep(() => projects.get(TextDocument.create(
+        pathToFileURL(join(root, "wild/x.tilua")).href, "tilua", 2, wildText)))
+    check("projects: a library installed under the pattern later is loaded", diagnostics(refreshed).map(d => d.message), [])
+
     const lite = projects.get(openFile("game/lite/x.tilua", "print(game)\n"))
     check("projects: a nested config replaces the outer one",
         [lite.project.config?.path.endsWith(join("lite", "tilua.config.json")), lite.types.aliases.has("Part"), lite.types.aliases.has("Partial")],
@@ -972,7 +1067,7 @@ print(later)
         projects.get(openFile("dup/x.tilua", "")).project.problems.length, 2)
     check("projects: a missing type library is reported",
         projects.get(openFile("missing/x.tilua", "")).project.problems.map(problem => problem.message),
-        ["Cannot find type library '@tilua-types/nope'. Install it with: npm i -D @tilua-types/nope"])
+        ["Cannot find type library '@tilua-types/nope' or 'nope'. Install it with: npm i -D @tilua-types/nope"])
 
     // Editing a config re-checks the files under it.
     put("game/lite/tilua.config.json", JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
@@ -1086,7 +1181,7 @@ print(later)
         `    GetSettings: ReplicatedStorage:FindFirstChild("GetSettings") as RemoteFunction,`,
         `}`,
         `function scan() {`,
-        `    for (RemoteName, Remote in pairs(Remotes)) {`,
+        `    for (const [RemoteName, Remote] in pairs(Remotes)) {`,
     ].join("\n") + "\n"
     const labelsAt = (src: string): string[] => {
         const opened = open(src)
@@ -1154,7 +1249,7 @@ print(later)
         "        return true",
         "    }",
         "}",
-        "const d = new Dog(\"Rex\")",
+        "const d = Dog.new(\"Rex\")",
         "",
         "",
         "",
@@ -1210,9 +1305,9 @@ print(later)
 
     // Go to definition on a construction lands on the class.
     {
-        const { document, cursor } = open(`${CLASS}const q = new D‸og("a")\n`)
+        const { document, cursor } = open(`${CLASS}const q = D‸og.new("a")\n`)
         const target = definition(analyzer.get(document), cursor)
-        check("definition: `new Dog(...)` goes to the class",
+        check("definition: `Dog.new(...)` goes to the class",
             target && (target as { range: { start: { line: number } } }).range.start.line,
             CLASS.split("\n").findIndex(line => line.startsWith("class Dog")))
     }
@@ -1238,15 +1333,15 @@ print(later)
             "",
             "",
         ].join("\n")
-        const { document, cursor } = open(`${BOX}const n‸ = new Box("a")\n`)
+        const { document, cursor } = open(`${BOX}const n‸ = Box.new("a")\n`)
         check("hover: a generic class is shown at the argument it was made with",
             (hover(analyzer.get(document), cursor)?.contents as { value: string }).value,
             "```tilua-hover\nconst n: Box<string>\n```")
-        const got = open(`${BOX}const n = new Box(1)\nconst g‸ot = n:get()\n`)
+        const got = open(`${BOX}const n = Box.new(1)\nconst g‸ot = n:get()\n`)
         check("hover: a generic class's method answers at that argument",
             (hover(analyzer.get(got.document), got.cursor)?.contents as { value: string }).value,
             "```tilua-hover\nconst got: number\n```")
-        const annotated = open(`${BOX}const which: Box<number> = new Box(1)\nconst wrong: Box<number> = new Box("a")\n`)
+        const annotated = open(`${BOX}const which: Box<number> = Box.new(1)\nconst wrong: Box<number> = Box.new("a")\n`)
         check("diagnostics: a generic class is not another instantiation of itself",
             diagnostics(analyzer.get(annotated.document)).map(d => d.message),
             ["Type 'Box<string>' is not assignable to 'Box<number>', 'value' is string, not number"])
@@ -1262,7 +1357,7 @@ print(later)
             "        return this.n",
             "    }",
             "}",
-            "const c = new Counter()",
+            "const c = Counter.new()",
             "",
             "",
             "",

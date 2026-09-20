@@ -206,12 +206,6 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
             return undefined
         }
 
-        // `...` — what this function's extra arguments are.
-        case "VarargExpression": {
-            const type = types.typeOf.get(node as unknown as Expression)
-            return type ? `(vararg) ...: ${pretty(type)}` : undefined
-        }
-
         // Declarations: `const x`, a parameter.
         case "IdentifierPattern":
         case "FunctionParameter":

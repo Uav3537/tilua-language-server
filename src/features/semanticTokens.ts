@@ -37,7 +37,7 @@ export const semanticTokensLegend: SemanticTokensLegend = {
  *  AST did not already claim it as a name. */
 const SOFT_KEYWORDS = new Set([
     "type", "declare", "class", "extends", "keyof", "infer", "readonly", "is", "asserts", "satisfies", "typeof",
-    "default", "new", "super",
+    "default", "super", "abstract", "implements",
 ])
 
 /** Soft keywords that belong with `export` / `return` rather than with
@@ -126,9 +126,9 @@ function classify(
             return
         }
 
-        // A class body's own words. `public`, `private`, `get`, `set`, `static` and `constructor`
-        // are ordinary names anywhere else, so they are coloured from the
-        // member they open rather than wherever they are written.
+        // A class body's own words. The modifiers, `get`, `set` and
+        // `constructor` are ordinary names anywhere else, so they are coloured
+        // from the member they open rather than wherever they are written.
         case "ClassMethod":
         case "ClassField":
         case "ClassAccessor":
@@ -136,19 +136,25 @@ function classify(
             const opener = node.type === "ClassConstructor" ? "constructor"
                 : node.type === "ClassAccessor" ? node.kind as string
                 : undefined
-            const words = firstTokensWithin(identifiers, node, 3)
-            let index = 0
-            const accessibility = node.accessibility as string | undefined
-            if (accessibility && words[index] && wordOf(words[index]) === accessibility) {
-                add(words[index], accessibility.length, "keyword")
-                index++
-            }
-            if (node.isStatic === true && words[index] && wordOf(words[index]) === "static") {
-                add(words[index], "static".length, "keyword")
-                index++
-            }
-            if (opener && words[index] && wordOf(words[index]) === opener) {
-                add(words[index], opener.length, "keyword")
+            // The modifiers this member has, in whatever order they were
+            // written, then the word that says what it is.
+            const written = new Set<string>([
+                ...(node.accessibility ? [node.accessibility as string] : []),
+                ...(node.isStatic === true ? ["static"] : []),
+                ...(node.isAbstract === true ? ["abstract"] : []),
+                ...(node.isOverride === true ? ["override"] : []),
+                ...(node.isReadonly === true ? ["readonly"] : []),
+            ])
+            const words = firstTokensWithin(identifiers, node, written.size + 1)
+            for (const word of words) {
+                const text = wordOf(word) ?? ""
+                if (written.has(text)) {
+                    add(word, text.length, "keyword")
+                    written.delete(text)
+                    continue
+                }
+                if (opener && text === opener) add(word, opener.length, "keyword")
+                break
             }
             return
         }

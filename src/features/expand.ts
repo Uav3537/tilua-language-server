@@ -55,7 +55,7 @@ function children(type: Type, f: (t: Type) => Type): Type {
         case "array":
             return arrayOf(f(type.element))
         case "tuple":
-            return tuple(type.elements.map(f), type.isPack)
+            return tuple(type.elements.map(f), type.rest && f(type.rest))
         case "union":
             return union(type.types.map(f))
         case "intersection": {
@@ -73,13 +73,16 @@ function children(type: Type, f: (t: Type) => Type): Type {
             return out
         }
         case "function":
-            return fn(
-                type.params.map(p => ({ ...p, type: f(p.type) })),
-                f(type.returns),
-                type.varargs && f(type.varargs),
-                type.typeParams,
-                type.predicate,
-            )
+            return {
+                ...fn(
+                    type.params.map(p => ({ ...p, type: f(p.type) })),
+                    f(type.returns),
+                    type.varargs && f(type.varargs),
+                    type.typeParams,
+                    type.predicate,
+                ),
+                ...(type.restIsWhole ? { restIsWhole: true } : {}),
+            }
         default:
             return type
     }
