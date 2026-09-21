@@ -8,7 +8,7 @@
  */
 import type { Position, SignatureHelp, SignatureInformation } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
-import type { Expression } from "@tilua/parser"
+import { parseWithRecovery, type Expression, type Program } from "@tilua/parser"
 import type { Analyzer, Analysis } from "../analysis.js"
 import { containsPosition, pathAt, type Spanned } from "../ast-utils.js"
 import { signaturesOf, signatureLabel } from "./members.js"
@@ -27,18 +27,26 @@ export function signatureHelp(
     const offset = document.offsetAt(position)
     for (const repair of ["", "nil", "nil)", ")"]) {
         const text = source.slice(0, offset) + repair + source.slice(offset)
-        const analysis = analyzer.analyze(document.uri, -1, text)
+        // Only a text with a call at the cursor is worth its types: parsing
+        // says so for a fraction of what analyzing would cost. The text as it
+        // is written is the document's own analysis, which is kept.
+        if (!callAt(parseWithRecovery(text).program, position)) continue
+        const analysis = repair ? analyzer.analyze(document.uri, -1, text) : analyzer.get(document)
         const found = helpAt(analysis, position)
         if (found) return found
     }
     return null
 }
 
-function helpAt(analysis: Analysis, position: Position): SignatureHelp | null {
-    const path = pathAt(analysis.program, position, true)
-    const call = [...path].reverse().find(
+function callAt(program: Program, position: Position): CallLike | undefined {
+    const path = pathAt(program, position, true)
+    return [...path].reverse().find(
         n => n.type === "CallExpression" || n.type === "MethodCallExpression",
     ) as CallLike | undefined
+}
+
+function helpAt(analysis: Analysis, position: Position): SignatureHelp | null {
+    const call = callAt(analysis.program, position)
     if (!call) return null
 
     const callee = call.type === "CallExpression"

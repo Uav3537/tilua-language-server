@@ -12,7 +12,10 @@ import {
     type CompletionItem, type Position,
 } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
-import { formatType, isClassType, isUnassignedGlobal, type Expression, type Type, type TypeNode } from "@tilua/parser"
+import {
+    formatType, isClassType, isUnassignedGlobal, parseWithRecovery,
+    type Expression, type Program, type Type, type TypeNode,
+} from "@tilua/parser"
 import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
 import { importItems, serviceItems } from "./autoImport.js"
@@ -114,7 +117,7 @@ export function completion(
             sortText: `3${name}`,
         }))
         const typeNames = new Set(first.analysis.types.aliases.keys())
-        const imported = importItems(analyzer, analyzer.get(document), true, typeNames)
+        const imported = importItems(analyzer, first.analysis, true, typeNames)
         return [...named, ...primitives, ...keywords, ...imported]
     }
 
@@ -128,7 +131,10 @@ export function completion(
     for (const binding of first.analysis.scopes.bindings.values()) {
         if (!isUnassignedGlobal(binding)) taken.add(binding.name)
     }
-    const current = analyzer.get(document)
+    // The speculative copy is the document with one word swapped, which is
+    // all these read — analyzing the document itself as well would double
+    // what a keystroke costs.
+    const current = first.analysis
     return [
         ...valueItems(first.analysis, at, insideFunction(first.path)),
         ...contextKeywords(source.slice(0, start)),
@@ -208,24 +214,22 @@ function stringCompletion(
     document: TextDocument,
     position: Position,
 ): CompletionItem[] | undefined {
-    let analysis = analyzer.get(document)
-    let literal = stringAt(analysis, position)
-    if (!literal) {
+    // Whether the cursor is in a string at all is a question for the parser
+    // alone. Most completions are not in one, and the types it would take to
+    // answer the rest are only worth working out once one is found.
+    let text: string | undefined = document.getText()
+    if (!stringAt(parseWithRecovery(text).program, position)) {
         // Mid-typing, the line around the string rarely parses yet —
         // `if name == "` has neither its closing quote nor its `then`. Try the
         // likeliest endings on a copy, and read the string from the first
         // that parses. The endings go after the cursor, so positions hold.
         const repaired = repairedStrings(document, position)
-        for (const text of repaired) {
-            const candidate = analyzer.analyze(document.uri, -1, text)
-            literal = stringAt(candidate, position)
-            if (literal) {
-                analysis = candidate
-                break
-            }
-        }
-        if (!literal) return repaired.length ? [] : undefined
+        text = repaired.find(candidate => stringAt(parseWithRecovery(candidate).program, position))
+        if (text === undefined) return repaired.length ? [] : undefined
     }
+    const analysis = text === document.getText() ? analyzer.get(document) : analyzer.analyze(document.uri, -1, text)
+    const literal = stringAt(analysis.program, position)
+    if (!literal) return []
 
     const expected = analysis.types.expectedTypeOf.get(literal as unknown as Expression)
     const values = [...new Set([
@@ -250,8 +254,8 @@ function stringCompletion(
     }))
 }
 
-function stringAt(analysis: Analysis, position: Position): Spanned | undefined {
-    const path = pathAt(analysis.program, position, false)
+function stringAt(program: Program, position: Position): Spanned | undefined {
+    const path = pathAt(program, position, false)
     return [...path].reverse().find(n => n.type === "StringLiteral" || n.type === "TypeLiteralString")
 }
 
