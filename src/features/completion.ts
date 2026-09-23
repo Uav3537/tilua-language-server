@@ -20,7 +20,7 @@ import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
 import { importItems, serviceItems } from "./autoImport.js"
 import { importCompletion } from "./imports.js"
-import { membersOf, signaturesOf, signatureLabel } from "./members.js"
+import { membersOf, metatableMembersOf, signaturesOf, signatureLabel } from "./members.js"
 
 const PLACEHOLDER = "__tiluaCompletion__"
 const IDENTIFIER_CHAR = /[A-Za-z0-9_]/
@@ -402,7 +402,13 @@ function memberItems(analysis: Analysis, access: Spanned, ancestors: readonly Sp
     // A `private` member is only offered inside the class that declared it —
     // anywhere else, reaching it is an error.
     const inside = new Set<object>(ancestors.filter(n => n.type === "ClassDeclaration" || n.type === "ClassExpression"))
-    return membersOf(type, analysis.types.aliases)
+    // With `:`, a method the value's metatable gives it too — unless a member
+    // of its own has the name, which is what the call would reach.
+    const own = membersOf(type, analysis.types.aliases)
+    const inherited = colon
+        ? metatableMembersOf(type, analysis.types.metatableMembers).filter(member => !own.some(m => m.name === member.name))
+        : []
+    return [...own, ...inherited]
         .filter(member => (colon ? member.isMethod : true))
         .filter(member => !member.property.private || inside.has(member.property.private.owner))
         .map(member => memberItem(member.name, member.property.type, member.property.readonly))

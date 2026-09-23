@@ -1,5 +1,5 @@
 /** What members a type has — shared by completion and signature help. */
-import { formatType, substitute, union, type FunctionType, type ObjectProperty, type Type } from "@tilua/parser"
+import { formatType, type FunctionType, type ObjectProperty, type Type } from "@tilua/parser"
 
 export interface Member {
     name: string
@@ -72,25 +72,27 @@ export function membersOf(
         }
         case "typeParam":
             return membersOf(type.constraint, aliases, seen)
-        // An array and a string answer to the methods the language gives them
-        // — `names:filter(f)`, `text:trim()`. They are written in the parser's
-        // prelude as `ArrayMethods<T>` and `StringMethods`, so the element
-        // type goes in where `T` stands.
-        case "array":
-        case "tuple": {
-            const element = type.kind === "array" ? type.element : union(type.elements)
-            const methods = aliases.get("ArrayMethods")
-            return methods
-                ? membersOf(substitute(methods, new Map([["T", element]])), aliases, seen)
-                : []
-        }
-        case "primitive":
-            return type.name === "string" ? membersOf(aliases.get("StringMethods"), aliases, seen) : []
-        case "literal":
-            return type.base === "string" ? membersOf(aliases.get("StringMethods"), aliases, seen) : []
+        // An array and a string have no members of their own: what they
+        // answer to is their metatable's — see `metatableMembersOf`.
         default:
             return []
     }
+}
+
+/** What a value's metatable `__index` gives it: the language's methods for a
+ *  string, an array or a table (`text:trim()`, `names:filter(f)`,
+ *  `point:keys()`), and whatever a library added to them. The analyzer
+ *  works out which metatable a value has; `metatable` is its answer. */
+export function metatableMembersOf(
+    type: Type | undefined,
+    metatable: (type: Type) => ReadonlyMap<string, Type>,
+): Member[] {
+    if (!type) return []
+    return [...metatable(type)].map(([name, member]) => ({
+        name,
+        property: { type: member, optional: false },
+        isMethod: takesSelf(member),
+    }))
 }
 
 export function takesSelf(type: Type): boolean {

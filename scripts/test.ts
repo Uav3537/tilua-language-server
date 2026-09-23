@@ -321,8 +321,9 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const maybe = `type Part = { Name: string, Destroy: (self: Part) => nil }\ndeclare part: Part | nil\n`
     check("completion: `?.` offers the members of the non-nil type",
         labelsAt(`${maybe}part?.‸\n`).sort(), ["Destroy", "Name"])
+    // Its own, then what every table answers to (the language's metatable).
     check("completion: `?:` offers its methods",
-        labelsAt(`${maybe}part?:‸\n`), ["Destroy"])
+        labelsAt(`${maybe}part?:‸\n`), ["Destroy", "keys", "values", "entries"])
     contains("completion: past a `?.` in a chain", labelsAt(`game?.Workspace.‸\n`), "Name")
     const indexed = `type R = { RemoteMap: { Char: number }, ClassMap: { Sans: string } }\nconst t = { x: 1, y: 2 }\n`
     check("completion: the keys a string can index, in a type, a constraint and a value", [
