@@ -43,10 +43,9 @@ export function documentSymbols(analysis: Analysis): DocumentSymbol[] {
                 break
             }
             case "VariableDeclaration": {
-                for (const target of (node as unknown as { names?: Spanned[] }).names ?? []) {
-                    const name = (target as unknown as { name?: string }).name
-                    if (name) out.push(symbol(name, SymbolKind.Variable, target))
-                }
+                const target = (node as unknown as { name: Spanned }).name
+                const name = (target as unknown as { name?: string }).name
+                if (name) out.push(symbol(name, SymbolKind.Variable, target))
                 break
             }
         }

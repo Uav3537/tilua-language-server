@@ -261,10 +261,8 @@ export function exportDeclaration(
                 if (declaration.type === "FunctionDeclaration" || declaration.type === "ClassDeclaration") {
                     if (declaration.name.name === name) return here(declaration.name)
                 } else {
-                    for (const target of declaration.names) {
-                        const found = patternNamed(target, name)
-                        if (found) return here(found)
-                    }
+                    const found = patternNamed(declaration.name, name)
+                    if (found) return here(found)
                 }
                 break
             }

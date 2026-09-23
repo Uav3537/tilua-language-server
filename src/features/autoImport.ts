@@ -138,7 +138,7 @@ function serviceInsertion(statements: readonly Statement[]): { position: Positio
 /** `const X = game:GetService("X")` */
 function isServiceDeclaration(statement: Statement): boolean {
     if (statement.type !== "VariableDeclaration") return false
-    const init = statement.init[0]
+    const init = statement.init
     return init?.type === "MethodCallExpression" && init.method.name === "GetService" &&
         init.object.type === "Identifier" && init.object.name === "game"
 }
