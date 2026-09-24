@@ -1,6 +1,6 @@
 {
   "name": "@tilua/language-server",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "description": "Language server for tilua (LSP), built on @tilua/parser",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -35,7 +35,7 @@
   "type": "module",
   "devDependencies": {
     "@tilua-types/lua": "^4.0.0",
-    "@tilua-types/roblox": "^4.0.0",
+    "@tilua-types/roblox": "^4.1.0",
     "@types/node": "^22.20.2",
     "tsup": "^8.5.1",
     "tsx": "^4.23.13",

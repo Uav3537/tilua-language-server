@@ -314,6 +314,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("completion: `game.` alone on a line",labelsAt(`game.‸\n`), "Workspace")
     contains("completion: a chain `game.Workspace.`", labelsAt(`game.Workspace.‸\n`), "Name")
     contains("completion: `:` on a string reaches the string library", labelsAt(`const s = "abc"\ns:‸\n`), "upper")
+    contains("completion: in an annotated parameter's default",
+        labelsAt(`const Base = { ping: () => 1 }\nfunction f(wait: number = Base.‸) { return wait }\n`), "ping")
     check("completion: nothing, rather than globals, when a type has no members",
         labelsAt(`const xs = [1, 2]\nxs.‸\n`), [])
     check("completion: `..` is concatenation, not member access",
