@@ -8,9 +8,9 @@ import {
     type DocumentHighlight, type Location, type Position, type Range,
     type TextEdit, type WorkspaceEdit,
 } from "vscode-languageserver"
-import type { Binding } from "@tilua/parser"
+import { isIdentifier, type Binding } from "@tilua/parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
-import { pathAt, toRange, type Spanned } from "../ast-utils.js"
+import { isImplicit, pathAt, toRange, type Spanned } from "../ast-utils.js"
 
 /** Nodes that can name a binding — as a use or as its declaration. */
 const NAMING = new Set(["Identifier", "IdentifierPattern", "FunctionParameter", "TypedIdentifier"])
@@ -28,10 +28,13 @@ export function bindingAt(analysis: Analysis, position: Position): Binding | und
     return undefined
 }
 
-/** Every place the binding appears: its declaration plus every reference. */
+/** Every place the binding appears: its declaration plus every reference. An
+ *  implicit `this`/`self` is declared nowhere in the text, so only its uses. */
 function sites(binding: Binding): Spanned[] {
     const out: Spanned[] = []
-    if (binding.declarationNode) out.push(binding.declarationNode as unknown as Spanned)
+    if (binding.declarationNode && !isImplicit(binding.declarationNode)) {
+        out.push(binding.declarationNode as unknown as Spanned)
+    }
     out.push(...(binding.references as unknown as Spanned[]))
     return out
 }
@@ -73,8 +76,9 @@ export function prepareRename(
     const binding = bindingAt(analysis, position)
     if (!binding) return null
     // A builtin lives in a definitions file; renaming it here would rename the
-    // uses and leave the declaration behind.
-    if (binding.isBuiltin || !binding.declarationNode) return null
+    // uses and leave the declaration behind. `this` and `self` are names the
+    // language gives, not the file.
+    if (!renamable(binding)) return null
     const path = pathAt(analysis.program, position, true)
     const identifier = [...path].reverse().find(n => !!n.type && NAMING.has(n.type))
     if (!identifier) return null
@@ -84,12 +88,11 @@ export function prepareRename(
 export function rename(analysis: Analysis, position: Position, newName: string): WorkspaceEdit | null {
     if (!isIdentifier(newName)) return null
     const binding = bindingAt(analysis, position)
-    if (!binding || binding.isBuiltin || !binding.declarationNode) return null
+    if (!binding || !renamable(binding)) return null
     const edits: TextEdit[] = sites(binding).map(node => ({ range: toRange(node), newText: newName }))
     return { changes: { [analysis.uri]: edits } }
 }
 
-const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/
-function isIdentifier(name: string): boolean {
-    return IDENTIFIER.test(name)
+function renamable(binding: Binding): boolean {
+    return !binding.isBuiltin && !!binding.declarationNode && !isImplicit(binding.declarationNode)
 }

@@ -15,7 +15,7 @@
 import type { SemanticTokens, SemanticTokensLegend } from "vscode-languageserver"
 import { tokenize, isClassType, unknownType, type Binding, type Expression, type Identifier, type Token, type Type, type TypeNode } from "@tilua/parser"
 import { bindingOfNode, type Analysis } from "../analysis.js"
-import { children, type Spanned } from "../ast-utils.js"
+import { children, isImplicit, type Spanned } from "../ast-utils.js"
 import { signaturesOf } from "./members.js"
 
 const TOKEN_TYPES = [
@@ -120,7 +120,8 @@ function classify(
         case "FunctionParameter": {
             const name = node.name
             // A destructured parameter has no name; its leaves are patterns.
-            if (typeof name !== "string" || !name) return
+            // An implicit `this`/`self` has no text of its own to colour.
+            if (typeof name !== "string" || !name || isImplicit(node)) return
             const binding = bindingOfNode(analysis, node)
             add(node, name.length, valueKind(analysis, binding), modifiersOf(binding, true))
             return

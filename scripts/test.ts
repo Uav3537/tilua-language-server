@@ -183,6 +183,22 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("semantic: a type parameter's use", conditional, "T:typeParameter")
     contains("semantic: `infer` is a keyword", conditional, "infer:keyword")
     contains("semantic: the inferred name", conditional, "R:typeParameter.declaration")
+
+    // A method's `this` and a `function T:m()`'s `self` are parameters the
+    // parser adds, with the span of what implies them. Nothing there is theirs
+    // to colour: `function` stays a keyword, `T` stays the table.
+    const method = tokensOf(`class Box {\n    n = 0\n    function get() { return this.n }\n}\nconst T = {}\nfunction T:m() { return self }\n`)
+    // A method written as TypeScript writes it: the modifier is a keyword, the
+    // name a method, with or without `function` before it.
+    const shorthand = tokensOf(`class Box {\n    n = 0\n    public static make(): Box { return Box.new() }\n    get2() { return this.n }\n}\n`)
+    contains("semantic: a shorthand method's modifier", shorthand, "public:keyword")
+    contains("semantic: a shorthand method's `static`", shorthand, "static:keyword")
+    contains("semantic: a shorthand method's name", shorthand, "make:method.declaration")
+    contains("semantic: a bare shorthand method's name", shorthand, "get2:method.declaration")
+
+    // Only the uses: before, `func` (of `function`) and `T:m(` were coloured too.
+    check("semantic: an implicit this colours nothing",
+        method.filter(t => t.includes(":parameter")), ["this:parameter", "self:parameter"])
     contains("semantic: a primitive type", conditional, "unknown:type.defaultLibrary")
 
     const call = tokensOf(`print(type(1))\n`)
@@ -325,7 +341,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`${maybe}part?.‸\n`).sort(), ["Destroy", "Name"])
     // Its own, then what every table answers to (the language's metatable).
     check("completion: `?:` offers its methods",
-        labelsAt(`${maybe}part?:‸\n`), ["Destroy", "keys", "values", "entries"])
+        labelsAt(`${maybe}part?:‸\n`),
+        ["Destroy", "keys", "values", "entries", "hasOwn", "hasOwnProperty", "assign", "freeze", "isFrozen"])
     contains("completion: past a `?.` in a chain", labelsAt(`game?.Workspace.‸\n`), "Name")
     const indexed = `type R = { RemoteMap: { Char: number }, ClassMap: { Sans: string } }\nconst t = { x: 1, y: 2 }\n`
     check("completion: the keys a string can index, in a type, a constraint and a value", [
@@ -1441,6 +1458,31 @@ print(later)
         "const v: UserId",
         `const v: string & { readonly __brand: "UserId" }`,
     ])
+}
+
+// --- implicit this / self ------------------------------------------------
+// On the `function` of a method there is no `this` to hover or rename; on a
+// use of it there is.
+{
+    const { prepareRename, references } = await import("../src/features/navigation.js")
+    const src = (at: "keyword" | "use") => [
+        `class Box {`,
+        `    n = 0`,
+        at === "keyword" ? `    fun‸ction get() { return this.n }` : `    function get() { return th‸is.n }`,
+        `}`,
+        ``,
+    ].join("\n")
+    const onKeyword = open(src("keyword"))
+    const hovered = hover(analyzer.get(onKeyword.document), onKeyword.cursor)?.contents as { value: string } | undefined
+    check("implicit this: the method keyword hovers as no parameter",
+        hovered?.value.includes("(parameter) this") ?? false, false)
+    const onUse = open(src("use"))
+    check("implicit this: a use still hovers",
+        ((hover(analyzer.get(onUse.document), onUse.cursor)?.contents as { value: string } | undefined)?.value ?? "")
+            .includes("this: Box"), true)
+    check("implicit this: cannot be renamed", prepareRename(analyzer.get(onUse.document), onUse.cursor), null)
+    check("implicit this: references are the uses alone",
+        references(analyzer.get(onUse.document), onUse.cursor, true).map(r => r.range.start.line), [2])
 }
 
 for (const failure of failures) console.log(`FAIL ${failure}`)

@@ -93,6 +93,9 @@ export function pathAt(root: Spanned, pos: Position, inclusive = false): Spanned
     let best: Spanned[] | undefined
 
     const descend = (node: Spanned, ancestors: Spanned[]): void => {
+        // An implicit `this`/`self` borrows its method's span; the cursor is
+        // never on it, whatever the span says.
+        if (isImplicit(node)) return
         const here = [...ancestors, node]
         if (containsPosition(node, pos, inclusive)) {
             // Prefer the narrowest hit, and among equals the deepest — that is
@@ -109,6 +112,12 @@ export function pathAt(root: Spanned, pos: Position, inclusive = false): Spanned
 
     descend(root, [])
     return best ?? []
+}
+
+/** A node the parser added that no text in the source spells: the `this` of a
+ *  class method, the `self` of `function T:m()`. */
+export function isImplicit(node: unknown): boolean {
+    return !!node && typeof node === "object" && (node as { implicit?: boolean }).implicit === true
 }
 
 /** The innermost node containing `pos`. */
