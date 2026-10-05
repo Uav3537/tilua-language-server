@@ -119,7 +119,7 @@ export function signaturesOf(type: Type | undefined, aliases?: ReadonlyMap<strin
 
 /** `(a: number, b?: string) => boolean`, and the pieces of it, for signature
  *  help — which needs each parameter's own label to highlight the active one. */
-export function signatureLabel(signature: FunctionType): { label: string; parameters: string[] } {
+export function signatureLabel(signature: FunctionType): { label: string; parameters: string[]; rest: string[] } {
     const parameters = signature.params.map((p, i) => {
         const name = p.name ?? `arg${i + 1}`
         return `${name}${p.optional ? "?" : ""}: ${formatType(p.type)}`
@@ -130,5 +130,5 @@ export function signatureLabel(signature: FunctionType): { label: string; parame
         : signature.restIsWhole ? [`...args: ${formatType(signature.varargs)}`]
         : [`...args: ${formatType(signature.varargs)}[]`]
     const label = `${generics}(${[...parameters, ...varargs].join(", ")}) => ${formatType(signature.returns)}`
-    return { label, parameters }
+    return { label, parameters, rest: varargs }
 }

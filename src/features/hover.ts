@@ -200,7 +200,10 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
             }
             // `x.foo` / `x:foo()` — the member's own type.
             if (parent?.type === "MemberExpression" || parent?.type === "MethodCallExpression") {
-                const type = types.typeOf.get(parent as unknown as Expression)
+                // The whole `x.foo` is the member; the whole `x:foo()` is
+                // what the call answered, so there the name has its own.
+                const member = parent.type === "MethodCallExpression" ? identifier : parent
+                const type = types.typeOf.get(member as unknown as Expression)
                 if (type) return `${name}: ${pretty(type)}`
             }
             return undefined

@@ -79,7 +79,12 @@ export function completion(
             n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
         )
         const parent = index > 0 ? path[index - 1] : undefined
-        if (parent && (parent.type === "MemberExpression" || parent.type === "MethodCallExpression")) {
+        // The placeholder as the member's name — not as an argument of
+        // `obj:m(|)`, nor as the object of `|.x`, which are ordinary values.
+        const named = parent?.type === "MemberExpression" ? (parent as unknown as { property: Spanned }).property
+            : parent?.type === "MethodCallExpression" ? (parent as unknown as { method: Spanned }).method
+            : undefined
+        if (parent && named === path[index]) {
             return memberItems(analysis, parent, path.slice(0, index - 1))
         }
         first ??= { analysis, path }
@@ -543,5 +548,5 @@ const KEYWORDS = [
     "const", "let", "function", "return", "if", "elseif", "else",
     "for", "in", "while", "do", "repeat", "until", "break", "continue",
     "type", "declare", "export", "import", "class", "abstract", "this", "super",
-    "and", "or", "not", "true", "false", "nil",
+    "and", "or", "not", "typeof", "true", "false", "nil",
 ]

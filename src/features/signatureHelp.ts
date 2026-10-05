@@ -65,9 +65,11 @@ function helpAt(analysis: Analysis, position: Position): SignatureHelp | null {
     const selfOffset = call.type === "MethodCallExpression" ? 1 : 0
     const written = activeArgument(call, position)
 
+    // A rest parameter is the last one listed, and takes every argument from
+    // its place on.
     const infos: SignatureInformation[] = signatures.map(signature => {
-        const { label, parameters } = signatureLabel(signature)
-        return { label, parameters: parameters.map(p => ({ label: p })) }
+        const { label, parameters, rest } = signatureLabel(signature)
+        return { label, parameters: [...parameters, ...rest].map(p => ({ label: p })) }
     })
 
     // Pick the overload that could still accept this many arguments.
@@ -80,7 +82,7 @@ function helpAt(analysis: Analysis, position: Position): SignatureHelp | null {
         activeSignature: active,
         activeParameter: Math.min(
             written + selfOffset,
-            Math.max(0, signatures[active].params.length - 1),
+            Math.max(0, infos[active].parameters!.length - 1),
         ),
     }
 }

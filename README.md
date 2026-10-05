@@ -105,8 +105,8 @@ undefined.
 
 A word's role in tilua depends on where it stands: `extends` is a keyword in a
 type and a name elsewhere, `type Foo = ...` declares an alias while `type(x)`
-calls a builtin, `typeof x` in a type is a query while `typeof(v)` in code is a
-call. A TextMate grammar only sees characters, so it can only guess — and
+calls a function, `typeof x` in a type is a query while `typeof v` in code is
+an operator. A TextMate grammar only sees characters, so it can only guess — and
 guessed `extends (` into a function call.
 
 So `semanticTokens` classifies every token from the same lexer and AST the

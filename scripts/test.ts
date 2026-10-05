@@ -201,8 +201,9 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         method.filter(t => t.includes(":parameter")), ["this:parameter", "self:parameter"])
     contains("semantic: a primitive type", conditional, "unknown:type.defaultLibrary")
 
-    const call = tokensOf(`print(type(1))\n`)
-    contains("semantic: `type(x)` in code is a call, not a keyword", call, "type:function.defaultLibrary")
+    const call = tokensOf(`declare function type(v: unknown): string\nprint(type(1), typeof 1)\n`)
+    contains("semantic: `type(x)` in code is a call, not a keyword", call, "type:function")
+    contains("semantic: `typeof v` in code is an operator", call, "typeof:keyword")
 
     const declared = tokensOf(`declare function greet(name: string): nil\nconst d = { v: 1 }\nconst c: typeof d = d\n`)
     contains("semantic: a declared function's name", declared, "greet:function.declaration")
@@ -258,7 +259,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
             ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
     }
     check("classes: typeof an Instance is \"Instance\"",
-        hoverText(`const ReplicatedStorage = game:GetService("ReplicatedStorage")\nconst ty‸pe = typeof(ReplicatedStorage)\n`),
+        hoverText(`const ReplicatedStorage = game:GetService("ReplicatedStorage")\nconst ty‸pe = typeof ReplicatedStorage\n`),
         `const type: "Instance"`)
     check("classes: a class shows what it extends and adds",
         hoverText(`const p: Pa‸rt = Instance.new("Part")\n`),
@@ -546,7 +547,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
 
 // --- keywords where they are valid, and `...` ---------------------------
 {
-    // `typeof` is a function at runtime as well, so it belongs in a value
+    // `typeof` is an operator in code as well, so it belongs in a value
     // position too — only the type-position cases look for it.
     const keywordsAt = (src: string, wanted = ["keyof", "infer", "extends", "as", "satisfies"]): string[] => {
         const { document, cursor } = open(src)
@@ -1142,6 +1143,37 @@ print(later)
     check("rename: rejects an invalid name", rename(analysis, cursor, "1bad"), null)
 }
 
+// --- typeof ------------------------------------------------------------
+{
+    // The names `typeof` answers are offered where one is compared with it:
+    // the language's, and the ones the library gives its own values.
+    const { document, cursor } = open(`declare v: unknown\nif (typeof v == "‸") { }\n`)
+    const names = completion(analyzer, document, cursor).map(i => i.label)
+    contains("typeof: the language's names are offered", names, "array")
+    contains("typeof: and the library's", names, "Vector3")
+    check("typeof: never \"table\"", names.includes("table"), false)
+    const table = open(`declare v: unknown\nif (typeof v == "table") { }\n`)
+    check("typeof: \"table\" is reported", diagnostics(analyzer.get(table.document)).map(d => d.message),
+        [`'typeof' never answers "table": a table is an "array" or an "object"`])
+}
+
+// --- hover on a method's name ------------------------------------------
+{
+    // The name is the method; the call around it is what the method answers.
+    const at = (src: string): string | undefined => {
+        const { document, cursor } = open(src)
+        return (hover(analyzer.get(document), cursor)?.contents as { value: string } | undefined)
+            ?.value.replace(/^```tilua-hover\n|\n```$/g, "")
+    }
+    check("hover: a method's name in a `:` call is the method, not its result", [
+        at(`const list: number[] = []\nlist:pu‸sh(1)\n`),
+        at(`const part = Instance.new("Part")\npart:Des‸troy()\n`),
+    ], [
+        "push: (self: number[], ...args: number[]) => number",
+        "Destroy: (self: Instance) => nil",
+    ])
+}
+
 // --- completion --------------------------------------------------------
 {
     const { document, cursor } = open(`const part = Instance.new("Part")\nprint(part.‸)\n`)
@@ -1190,6 +1222,32 @@ print(later)
     const help = signatureHelp(analyzer, document, cursor)
     check("signature help: `:` skips self",
         help ? help.activeParameter === 1 : null, true)
+}
+{
+    // A rest parameter is one of the listed ones, and stays the active one
+    // for every argument it takes — not `self`, which `:` already supplied.
+    const active = (src: string): unknown => {
+        const { document, cursor } = open(src)
+        const help = signatureHelp(analyzer, document, cursor)
+        return help?.signatures[help.activeSignature ?? 0]?.parameters?.[help.activeParameter ?? 0]?.label
+    }
+    check("signature help: a rest parameter is the active one", [
+        active(`console:log(‸)\n`),
+        active(`console:log("a", ‸)\n`),
+        active(`declare function f(a: number, ...rest: string[]): nil\nf(1, "a", ‸)\n`),
+    ], ["...args: unknown[]", "...args: unknown[]", "...args: string[]"])
+}
+{
+    // An argument of a method call is a value like any other, not a member
+    // of the receiver.
+    const labelsAt = (src: string): string[] => {
+        const { document, cursor } = open(src)
+        return completion(analyzer, document, cursor).map(i => i.label)
+    }
+    const inArgument = labelsAt(`console:log("a", scr‸)\n`)
+    contains("completion: names in scope inside a method call's arguments", inArgument, "scriptArgs")
+    check("completion: not the receiver's members there", inArgument.includes("hasOwn"), false)
+    contains("completion: nor for the object of a member access", labelsAt(`const v = scr‸.Name\n`), "script")
 }
 
 // --- records and discriminants -------------------------------------------

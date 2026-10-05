@@ -4,8 +4,8 @@
  * A TextMate grammar only sees characters, and in tilua a word's role depends
  * on where it stands: `extends` is a keyword inside a type and a plain name
  * elsewhere, `type Foo = ...` declares an alias while `type(x)` calls a
- * builtin, and `typeof x` in a type is a query while `typeof(v)` in code is a
- * call. Guessing that with regexes is how `extends (` came out coloured as a
+ * function, and `typeof x` in a type is a query while `typeof v` in code is
+ * an operator. Guessing that with regexes is how `extends (` came out coloured as a
  * function call. Here every token is classified from the same lexer and AST
  * the analyzer uses, so the colours cannot disagree with what the file means.
  *
