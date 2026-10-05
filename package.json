@@ -34,8 +34,8 @@
   "license": "ISC",
   "type": "module",
   "devDependencies": {
-    "@tilua-types/lua": "^5.0.0",
-    "@tilua-types/roblox": "^5.0.0",
+    "@tilua-types/lua": "^5.0.1",
+    "@tilua-types/roblox": "^5.0.1",
     "@types/node": "^22.20.2",
     "tsup": "^8.5.1",
     "tsx": "^4.23.13",
