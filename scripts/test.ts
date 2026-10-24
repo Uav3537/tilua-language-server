@@ -1417,7 +1417,7 @@ print(later)
     check("completion: `:` offers only what takes the instance",
         labels(`${CLASS}d:‸\n`).sort(), ["fetch", "speak"])
     check("completion: the class table offers its statics, `new` and the class it extends",
-        labels(`${CLASS}Dog.‸\n`).sort(), ["ParentClass", "count", "new"])
+        labels(`${CLASS}Dog.‸\n`).sort(), ["ParentClass", "count", "name", "new"])
     contains("completion: `new` offers the classes in scope", labels(`${CLASS}const z = new ‸\n`), "Dog")
     check("completion: `this` is the instance being written", labels([
         "class A {",

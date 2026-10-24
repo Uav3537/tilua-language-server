@@ -333,6 +333,7 @@ interface TypeParameterNode {
     constraint?: unknown
     isConst?: boolean
     infer?: boolean
+    variance?: string
 }
 
 function typeParameterText(analysis: Analysis, parameter: TypeParameterNode | AnyNode): string {
@@ -343,7 +344,7 @@ function typeParameterSignature(analysis: Analysis, parameter: TypeParameterNode
     const p = parameter as TypeParameterNode
     if (p.infer) return `infer ${p.name}`
     const constraint = p.constraint ? analysis.types.typeOfTypeNode.get(p.constraint as TypeNode) : undefined
-    return `${p.isConst ? "const " : ""}${p.name}${constraint ? ` extends ${formatType(constraint)}` : ""}`
+    return `${p.isConst ? "const " : ""}${p.variance ? `${p.variance} ` : ""}${p.name}${constraint ? ` extends ${formatType(constraint)}` : ""}`
 }
 
 /** The type parameter `name` refers to at this point: from an enclosing
