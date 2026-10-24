@@ -37,7 +37,7 @@ export const semanticTokensLegend: SemanticTokensLegend = {
  *  AST did not already claim it as a name. */
 const SOFT_KEYWORDS = new Set([
     "type", "declare", "class", "extends", "keyof", "infer", "readonly", "is", "asserts", "satisfies", "typeof",
-    "default", "super", "abstract", "implements",
+    "default", "super", "abstract", "implements", "interface", "instanceof", "out", "get", "set",
 ])
 
 /** Soft keywords that belong with `export` / `return` rather than with
@@ -45,7 +45,7 @@ const SOFT_KEYWORDS = new Set([
  *  scope themes colour control keywords with. */
 const CONTROL_KEYWORDS = new Set(["default"])
 
-const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer"])
+const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer", "object"])
 
 interface Entry {
     line: number
@@ -71,7 +71,7 @@ export function semanticTokens(analysis: Analysis): SemanticTokens {
 
     let tokens: Token[] = []
     try {
-        tokens = tokenize(analysis.source)
+        tokens = withInterpolations(tokenize(analysis.source))
     } catch {
         // A lex error: only what the (empty) AST knows gets coloured.
     }
@@ -100,6 +100,38 @@ export function semanticTokens(analysis: Analysis): SemanticTokens {
 }
 
 type AnyNode = Spanned & Record<string, unknown>
+
+/** The file's tokens with what each `${...}` holds read out in its place. A
+ *  template string is one token to the lexer, but `` `${infer N extends
+ *  number}` `` in a type has names and soft keywords in it like any other. */
+function withInterpolations(tokens: Token[]): Token[] {
+    if (!tokens.some(t => t.type === "InterpolatedString")) return tokens
+    const out: Token[] = []
+    for (const token of tokens) {
+        out.push(token)
+        if (token.type !== "InterpolatedString") continue
+        for (const part of token.parts) {
+            if (part.kind !== "expression") continue
+            let inner: Token[]
+            try {
+                inner = withInterpolations(tokenize(part.raw))
+            } catch {
+                continue
+            }
+            for (const t of inner) {
+                if (t.type === "EOF") continue
+                // Only the fragment's first line starts where the `${` does.
+                const shift = (at: number, line: number): number => line === 1 ? at + part.column - 1 : at
+                out.push({
+                    ...t,
+                    line: { start: t.line.start + part.line - 1, end: t.line.end + part.line - 1 },
+                    column: { start: shift(t.column.start, t.line.start), end: shift(t.column.end, t.line.end) },
+                } as Token)
+            }
+        }
+    }
+    return out
+}
 
 function classify(
     analysis: Analysis,

@@ -15,7 +15,7 @@ import { dirname, join, resolve } from "node:path"
 const here = dirname(fileURLToPath(import.meta.url))
 
 const root = mkdtempSync(join(tmpdir(), "tilua-e2e-"))
-for (const name of ["lua", "roblox"]) {
+for (const name of ["roblox"]) {
     const installed = resolve(here, `../node_modules/@tilua-types/${name}`)
     const target = join(root, "node_modules", "@tilua-types", name)
     mkdirSync(target, { recursive: true })

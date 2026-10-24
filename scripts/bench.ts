@@ -15,7 +15,7 @@ const repo = join(fileURLToPath(new URL(".", import.meta.url)), "..")
 const root = join(repo, ".bench-tmp")
 rmSync(root, { recursive: true, force: true })
 mkdirSync(join(root, "src"), { recursive: true })
-writeFileSync(join(root, "tilua.config.json"), JSON.stringify({ types: ["lua", "roblox"], paths: {}, sourceMap: null }))
+writeFileSync(join(root, "tilua.config.json"), JSON.stringify({ types: ["roblox"], paths: {}, sourceMap: null }))
 
 const paths: string[] = []
 for (let i = 0; i < FILES; i++) {

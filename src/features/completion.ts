@@ -13,7 +13,7 @@ import {
 } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import {
-    formatType, isClassType, isUnassignedGlobal, parseWithRecovery,
+    formatType, isClassType, isUnassignedGlobal, parseWithRecovery, numberType,
     type Expression, type Program, type Type, type TypeNode,
 } from "@tilua/parser"
 import type { Analysis, Analyzer } from "../analysis.js"
@@ -116,6 +116,11 @@ export function completion(
             kind: CompletionItemKind.Keyword,
             detail: "type",
         }))
+        // The type functions the analyzer supplies, which no alias declares.
+        const aliases = first.analysis.types.aliases
+        const intrinsics: CompletionItem[] = INTRINSIC_TYPES
+            .filter(name => !aliases.has(name))
+            .map(name => ({ label: name, kind: CompletionItemKind.Interface, detail: "type" }))
         const keywords: CompletionItem[] = TYPE_KEYWORDS.map(name => ({
             label: name,
             kind: CompletionItemKind.Keyword,
@@ -123,7 +128,7 @@ export function completion(
         }))
         const typeNames = new Set(first.analysis.types.aliases.keys())
         const imported = importItems(analyzer, first.analysis, true, typeNames)
-        return [...named, ...primitives, ...keywords, ...imported]
+        return [...named, ...primitives, ...intrinsics, ...keywords, ...imported]
     }
 
     // Names in scope, then what picking an item can bring into scope: another
@@ -399,24 +404,34 @@ function memberItems(analysis: Analysis, access: Spanned, ancestors: readonly Sp
     const type = withoutNil(analysis.types.typeOf.get(object))
     const colon = access.type === "MethodCallExpression"
 
-    // An array and a string have no fields of their own: what they answer to
-    // is the language's own methods, and only with `:`. `names.filter` would
-    // be a read of a key the table does not have.
-    if (isMethodOnly(type) && !colon) return []
-
     // A `private` member is only offered inside the class that declared it —
     // anywhere else, reaching it is an error.
     const inside = new Set<object>(ancestors.filter(n => n.type === "ClassDeclaration" || n.type === "ClassExpression"))
-    // With `:`, a method the value's metatable gives it too — unless a member
-    // of its own has the name, which is what the call would reach.
+    // A method the value's metatable gives it too — unless a member of its
+    // own has the name, which is what the call would reach. Read with `.`
+    // it is a function like any other, its `self` the first parameter:
+    // `names.join(names, ", ")`.
     const own = membersOf(type, analysis.types.aliases)
-    const inherited = colon
-        ? metatableMembersOf(type, analysis.types.metatableMembers).filter(member => !own.some(m => m.name === member.name))
-        : []
-    return [...own, ...inherited]
+    const inherited = metatableMembersOf(type, analysis.types.metatableMembers)
+        .filter(member => !own.some(m => m.name === member.name) && member.isMethod)
+    const items = [...own, ...inherited]
         .filter(member => (colon ? member.isMethod : true))
-        .filter(member => !member.property.private || inside.has(member.property.private.owner))
-        .map(member => memberItem(member.name, member.property.type, member.property.readonly))
+        // A protected one is reachable from the classes extending it too —
+        // offered inside any class, which is as close as the editor can say.
+        .filter(member => !member.property.private || inside.has(member.property.private.owner)
+            || (member.property.private.protected === true && inside.size > 0))
+        .map(member => {
+            const lent = inherited.includes(member)
+            const item = memberItem(member.name, member.property.type, member.property.readonly)
+            // What every value of the kind answers to comes after what this
+            // one holds — as JavaScript lists an object's own keys first.
+            return lent && !colon ? { ...item, sortText: `${INHERITED_SORT}${member.name}` } : item
+        })
+    // `.length` counts a string or a list, as Luau's `#` does.
+    if (!colon && isMethodOnly(type) && !own.some(m => m.name === "length")) {
+        items.push(memberItem("length", numberType, true))
+    }
+    return items
 }
 
 function withoutNil(type: Type | undefined): Type | undefined {
@@ -521,7 +536,15 @@ function inTypePosition(path: readonly Spanned[]): boolean {
 }
 
 const PRIMITIVES = [
-    "any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer",
+    "any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer", "object",
+]
+
+/** The `sortText` prefix of a method the value's metatable lends it, offered
+ *  after its own members. */
+export const INHERITED_SORT = "~"
+
+const INTRINSIC_TYPES = [
+    "Exclude", "Uppercase", "Lowercase", "Capitalize", "Uncapitalize", "ObjectKeys", "ObjectValues", "ObjectEntries",
 ]
 
 /** Keywords only a type position can hold. */

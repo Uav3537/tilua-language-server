@@ -77,7 +77,7 @@ const UNNAMED = new Set([
 
 type AnyNode = Spanned & Record<string, unknown>
 
-const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer"])
+const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer", "object"])
 
 function describe(analysis: Analysis, path: readonly Spanned[], index: number): string | undefined {
     const { types } = analysis
@@ -159,6 +159,21 @@ function describe(analysis: Analysis, path: readonly Spanned[], index: number): 
                         return type ? `${prefix}${name}: ${pretty(type)}` : `${prefix}${name}`
                     }
                     break
+                // A method is a member of the class around it: of its
+                // instances, or of the class itself when static.
+                case "ClassMethod": {
+                    if (parent.name !== node) break
+                    const owner = path.slice(0, index).reverse().find(a => (a as AnyNode).name && /^Class(Declaration|Expression)$/.test(a.type ?? "")) as AnyNode | undefined
+                    const className = owner && (owner.name as Identifier)
+                    if (!className) break
+                    const classBinding = bindingOfNode(analysis, className)
+                    const holder = parent.isStatic
+                        ? classBinding && types.bindingType.get(classBinding.id)
+                        : types.aliases.get(className.name)
+                    const type = holder?.kind === "object" ? holder.properties.get(name)?.type : undefined
+                    const prefix = parent.isStatic ? "(static) " : "(method) "
+                    return type ? `${prefix}${name}: ${pretty(type)}` : `${prefix}${name}`
+                }
                 case "ClassAccessor":
                     if (parent.name === node) return `(${parent.kind === "get" ? "getter" : "setter"}) ${name}`
                     break
@@ -258,6 +273,9 @@ function aliasText(analysis: Analysis, statement: AnyNode): string | undefined {
     const parameters = generics.length
         ? `<${generics.map(g => typeParameterSignature(analysis, g)).join(", ")}>`
         : ""
+    // An interface reads as what it was written as: its members merged with
+    // the ones it extends, and those of any other declaration of the name.
+    if (statement.interface) return `interface ${name}${parameters} ${pretty(alias)}`
     return `type ${name}${parameters} = ${pretty(alias)}`
 }
 

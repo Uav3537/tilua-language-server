@@ -15,7 +15,7 @@ import {
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import {
     formatType,
-    type BindingTarget, type ExportAllStatement, type ExportNamedStatement, type Identifier, type ImportStatement,
+    type BindingTarget, type ExportAllStatement, type ExportNamedStatement, type Identifier, type ImportExpression, type ImportStatement,
 } from "@tilua/parser"
 import { bindingOfNode, pathOfUri, samePath, uriOfPath, type Analysis, type Analyzer } from "../analysis.js"
 import { pathAt, toRange, type Spanned } from "../ast-utils.js"
@@ -37,6 +37,12 @@ export function importCompletion(
     const lineEnd = document.offsetAt({ line: position.line + 1, character: 0 })
     const before = text.slice(lineStart, cursor)
     const after = text.slice(cursor, lineEnd)
+
+    // In an `import()`'s module path, wherever on the line it is written:
+    // `const shop = import("./sha|")`.
+    const dynamic = /\bimport\s*\(\s*(["'])([^"']*)$/.exec(before)
+    if (dynamic) return pathItems(analyzer, document.uri, position, dynamic[2])
+
     if (!/^\s*(?:import|export)\b/.test(before)) return undefined
 
     // In the module path: `from "./sha|"`.
@@ -177,8 +183,8 @@ function rangeBack(position: Position, length: number): Range {
 // Definition
 // --------------------------------------------------------------------------
 
-/** A statement that names another module. */
-type ModuleReference = ImportStatement | ExportNamedStatement | ExportAllStatement
+/** A statement that names another module — or an `import("./module")`. */
+type ModuleReference = ImportStatement | ExportNamedStatement | ExportAllStatement | ImportExpression
 
 /** Go-to-definition inside a statement that names another module: the module
  *  string opens the module, a name jumps to where it is really declared —
@@ -191,8 +197,13 @@ export function importDefinition(
     position: Position,
 ): Location | null | undefined {
     const path = pathAt(analysis.program, position, true)
-    const statement = path.find(isModuleReference) as unknown as ModuleReference | undefined
+    // The innermost one: an `import()` is written inside a statement.
+    const statement = [...path].reverse().find(isModuleReference) as unknown as ModuleReference | undefined
     if (!statement?.source) return undefined
+    // An `import()` names its module in the string alone, and only a string
+    // names one: the rest of the expression is ordinary code.
+    if (statement.source.type !== "StringLiteral") return undefined
+    if (statement.type === "ImportExpression" && path[path.length - 1] !== (statement.source as unknown)) return undefined
 
     const target = analyzer.resolveModulePath(analysis.uri, statement.source.value)
     if (!target) return null
@@ -210,6 +221,7 @@ export function importDefinition(
 
 function isModuleReference(node: Spanned): boolean {
     return node.type === "ImportStatement"
+        || node.type === "ImportExpression"
         || node.type === "ExportAllStatement"
         || (node.type === "ExportNamedStatement" && !!(node as unknown as ExportNamedStatement).source)
 }
@@ -223,6 +235,7 @@ function referencedName(statement: ModuleReference, node: unknown): string | und
         case "ExportNamedStatement":
             return statement.specifiers.find(s => node === s.local || node === s.exported)?.local.name
         case "ExportAllStatement":
+        case "ImportExpression":
             return undefined
     }
 }

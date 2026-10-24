@@ -21,10 +21,10 @@ import type { Position } from "vscode-languageserver"
 import { readFileSync } from "node:fs"
 import { parse } from "@tilua/parser"
 
-// The parser has no types built in. These tests analyze against the Lua and
-// Roblox libraries, as a project whose config lists them would — in that
-// order, since Roblox's adds to Lua's.
-const testLibs = ["lua", "roblox"].map(name =>
+// Lua's standard library is the parser's own, there for every file. These
+// tests analyze against the Roblox library on top of it, as a project whose
+// config lists it would.
+const testLibs = ["roblox"].map(name =>
     parse(readFileSync(new URL(`../node_modules/@tilua-types/${name}/index.d.tilua`, import.meta.url), "utf8")))
 const analyzer = new Analyzer({ libs: testLibs })
 let passed = 0
@@ -86,7 +86,7 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("hover: a let declaration", hoverText(`let cou‸nt = 1\nprint(count)\n`),
         "```tilua-hover\nlet count: number\n```")
     check("hover: a parameter",
-        hoverText(`function f(x‸s: number[]): number {\n    return #xs\n}\n`),
+        hoverText(`function f(x‸s: number[]): number {\n    return xs.length\n}\n`),
         "```tilua-hover\n(parameter) xs: number[]\n```")
     check("hover: a function name",
         hoverText(`function first‸Two(xs: number[]): number {\n    return 1\n}\n`),
@@ -201,6 +201,20 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         method.filter(t => t.includes(":parameter")), ["this:parameter", "self:parameter"])
     contains("semantic: a primitive type", conditional, "unknown:type.defaultLibrary")
 
+    // A rest parameter is coloured over its name, not from the `...`: that
+    // painted `...a` and left `rgs` to the grammar.
+    const rest = tokensOf(`function f(...args: number[]) {\n    return args\n}\nconst g = (a: number, ...more: string[]) => more\n`)
+    contains("semantic: a rest parameter's name", rest, "args:parameter.declaration")
+    contains("semantic: an arrow's rest parameter's name", rest, "more:parameter.declaration")
+    check("semantic: the `...` of a rest parameter is not part of it",
+        rest.filter(t => t.startsWith("...")), [])
+
+    // What a template literal type interpolates is read like any other type.
+    const template = tokensOf("type Num<S> = S extends `${infer N extends number}` ? N : never\n")
+    contains("semantic: `infer` inside a template type", template, "infer:keyword")
+    contains("semantic: the name an `infer` in a template binds", template, "N:typeParameter.declaration")
+    contains("semantic: a type inside a template type", template, "number:type.defaultLibrary")
+
     const call = tokensOf(`declare function type(v: unknown): string\nprint(type(1), typeof 1)\n`)
     contains("semantic: `type(x)` in code is a call, not a keyword", call, "type:function")
     contains("semantic: `typeof v` in code is an operator", call, "typeof:keyword")
@@ -299,12 +313,21 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
 // A member access alone on a line is a syntax error, and that is exactly where
 // `obj.` gets typed. These used to fall back to listing the globals.
 {
+    // What the value holds, without the methods every table answers to.
     const labelsAt = (src: string): string[] => {
         const { document, cursor } = open(src)
-        return completion(analyzer, document, cursor).map(i => i.label)
+        return completion(analyzer, document, cursor).filter(i => !i.sortText?.startsWith("~")).map(i => i.label)
     }
     check("completion: `obj.` on its own line after a multi-line object",
         labelsAt(`const obj = {\n    a: 1\n}\nobj.‸`), ["a"])
+    // Union branches that share a part each still have that part's members.
+    check("completion: a union whose branches share a part lists the shared members",
+        labelsAt([
+            "type Base = { a: number }",
+            "type Both = (Base & { b: number }) | (Base & { b: nil })",
+            "declare const both: Both",
+            "both.‸",
+        ].join("\n")).sort(), ["a", "b"])
     // A `private` member is offered only where it can be reached.
     const account = "class Account {\n    owner = \"a\"\n    private balance = 0\n"
     const reach = (labels: string[]) => ["owner", "balance"].map(name => labels.includes(name))
@@ -333,8 +356,8 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("completion: `:` on a string reaches the string library", labelsAt(`const s = "abc"\ns:‸\n`), "upper")
     contains("completion: in an annotated parameter's default",
         labelsAt(`const Base = { ping: () => 1 }\nfunction f(wait: number = Base.‸) { return wait }\n`), "ping")
-    check("completion: nothing, rather than globals, when a type has no members",
-        labelsAt(`const xs = [1, 2]\nxs.‸\n`), [])
+    check("completion: an array's own members are only its length",
+        labelsAt(`const xs = [1, 2]\nxs.‸\n`), ["length"])
     check("completion: `..` is concatenation, not member access",
         labelsAt(`const alpha = 1\nprint("a" ..‸)\n`).includes("alpha"), true)
     const maybe = `type Part = { Name: string, Destroy: (self: Part) => nil }\ndeclare part: Part | nil\n`
@@ -434,9 +457,17 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     const arrayMethods = labelsAt(`const names = ["a"]\nnames:‸\n`)
     check("completion: an array's methods", [
         arrayMethods.includes("filter"), arrayMethods.includes("map"), arrayMethods.includes("join"),
-        // Only with `:` — `names.filter` reads a key the table does not have.
-        labelsAt(`const names = ["a"]\nnames.‸\n`).length,
-    ], [true, true, true, 0])
+    ], [true, true, true])
+    // With `.` too, as members: a method's first parameter is its `self`,
+    // handed to it like any argument — and `length` is offered as well.
+    const { document: dotted, cursor: dot } = open(`const names = ["a"]\nnames.‸\n`)
+    const viaDot = completion(analyzer, dotted, dot)
+    check("completion: `.` offers an array's methods, which take it as `self`, and its length", [
+        viaDot.some(i => i.label === "filter"), viaDot.some(i => i.label === "length"),
+        viaDot.find(i => i.label === "join")?.detail,
+    ], [true, true, "(self: readonly string[], separator?: string) => string"])
+    const stringDot = labelsAt(`const s = "abc"\ns.‸\n`)
+    check("completion: `.` on a string", [stringDot.includes("upper"), stringDot.includes("length")], [true, true])
 
     const stringMethods = labelsAt(`declare text: string\ntext:‸\n`)
     check("completion: a string's methods, Luau's own and the language's", [
@@ -571,6 +602,19 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     }
     check("hover: a rest parameter is the array it collects",
         hoverText(`function f(...numbers: number[]) {\n    print(numb‸ers)\n}\n`)?.includes("numbers: number[]"), true)
+    check("hover: a method's name reads as the member it declares",
+        hoverText(`class A {\n    public Conn‸ect(n: number) { return n }\n}\n`),
+        "(method) Connect: (this: A, n: number) => number")
+    // A parameter's span is its name: not the `...` before it, nor the
+    // annotation after it.
+    {
+        const { document, cursor } = open(`function f(a‸: number, ...rest: number[]) { return [a, rest] }\n`)
+        const analysis = analyzer.get(document)
+        const ranges = (position: Position) => Object.values(rename(analysis, position, "x")?.changes ?? {})[0]
+            ?.map(edit => document.getText(edit.range))
+        check("rename: a parameter's declaration is its name alone", ranges(cursor), ["a", "a"])
+        check("rename: a rest parameter's declaration leaves the dots", ranges({ line: 0, character: 26 }), ["rest", "rest"])
+    }
     check("diagnostics: bare `...` is a syntax error that says what to write",
         diagnostics(analyzer.get(open(`function f(...) {}\n`).document)).some(d => d.message.startsWith("tilua has no bare '...'")), true)
 }
@@ -785,6 +829,22 @@ print(later)
         check("modules: type-only imports are not offered as values",
             completion(modules, document, { line: 2, character: 6 }).map(i => i.label).includes("distance"), false)
         void cursor
+    }
+    {
+        // `import("./module")`: the module's exports, as `import * as` names them.
+        const { document, cursor } = file("dynamic.tilua",
+            `function late() {\n    const Shapes = import("./shared/shapes")\n    return Shapes.‸\n}\n`)
+        const labels = completion(modules, document, cursor).map(i => i.label)
+        contains("modules: `import()` completes the module's exports", labels, "distance")
+        const jump = file("dynamic-jump.tilua", `const Shapes = import("./shared/sha‸pes")\nprint(Shapes.distance)\n`)
+        check("modules: definition on an `import()`'s path opens the module",
+            importDefinition(modules, modules.get(jump.document), jump.cursor)?.uri.endsWith("shapes.tilua"), true)
+        check("modules: an `import()` is checked like any expression", diagnostics(modules.get(jump.document)).map(d => d.message), [])
+        const path = file("dynamic-path.tilua", `const Shapes = import("./shared/‸")\n`)
+        contains("modules: path completion inside an `import()`", completion(modules, path.document, path.cursor).map(i => i.label), "shapes")
+        const missing = file("dynamic-missing.tilua", `const gone = import("./gone")\n`)
+        check("modules: an `import()` of a module that is not there",
+            diagnostics(modules.get(missing.document)).map(d => d.message), ["Cannot find module './gone'"])
     }
     {
         const { document } = file("assign-import.tilua", `import { ORIGIN } from "./shared/shapes"\nORIGIN = nil as any\n`)
@@ -1020,7 +1080,7 @@ print(later)
         writeFileSync(join(root, path), text)
     }
     // The type libraries, installed the way a project would have them.
-    for (const name of ["lua", "roblox"]) {
+    for (const name of ["roblox"]) {
         const installed = fileURLToPath(new URL(`../node_modules/@tilua-types/${name}/`, import.meta.url))
         for (const file of ["package.json", "index.d.tilua"]) {
             put(`node_modules/@tilua-types/${name}/${file}`, readFileSync(join(installed, file), "utf8"))
@@ -1073,6 +1133,20 @@ print(later)
         pathToFileURL(join(root, "wild/x.tilua")).href, "tilua", 2, wildText)))
     check("projects: a library installed under the pattern later is loaded", diagnostics(refreshed).map(d => d.message), [])
 
+    // Lua's standard library is there with nothing listed, as JavaScript's is
+    // in TypeScript; naming its old package loads nothing twice, and `noLib`
+    // leaves it out.
+    put("std/tilua.config.json", JSON.stringify({ types: [] }))
+    const std = projects.get(openFile("std/x.tilua", "const n: number = math.floor(1.5)\nprint(n)\nprnt(n)\n"))
+    check("projects: the standard library needs no `types`", diagnostics(std).map(d => d.message), ["Cannot find name 'prnt'"])
+    put("std-named/tilua.config.json", JSON.stringify({ types: ["lua"] }))
+    const named = projects.get(openFile("std-named/x.tilua", "print(1)\n"))
+    check("projects: naming `lua` is not a problem, and nothing is declared twice",
+        [named.project.problems.length, diagnostics(named).map(d => d.message)], [0, []])
+    put("no-lib/tilua.config.json", JSON.stringify({ noLib: true }))
+    const bare = projects.get(openFile("no-lib/x.tilua", "const s: string = string.upper(\"a\")\n"))
+    check("projects: `noLib` leaves the standard library out", bare.types.aliases.has("PcallResult"), false)
+
     const lite = projects.get(openFile("game/lite/x.tilua", "print(game)\n"))
     check("projects: a nested config replaces the outer one",
         [lite.project.config?.path.endsWith(join("lite", "tilua.config.json")), lite.types.aliases.has("Part"), lite.types.aliases.has("Partial")],
@@ -1080,9 +1154,9 @@ print(later)
 
     const loose = projects.get(TextDocument.create(
         pathToFileURL(join(dirname(root), `tilua-no-config-${Date.now()}`, "x.tilua")).href, "tilua", 1, "print(1)\n"))
-    check("projects: a file no config covers has only the language's own types",
+    check("projects: a file no config covers has the language and its standard library, and nothing more",
         [loose.project.config, [...loose.types.aliases.keys()].sort().join(" ")],
-        [undefined, "Exclude Extract Falsy Mutable NonNullable Omit Parameters Partial Pick Readonly Record Required ReturnType Truthy"])
+        [undefined, "Console ConstructorParameters Extract Falsy InstanceType Iteration Mutable NonNullable Omit Parameters Partial PcallResult Pick Readonly Record Required ReturnType Truthy"])
 
     check("projects: two configs in one folder are reported on both",
         projects.get(openFile("dup/x.tilua", "")).project.problems.length, 2)
@@ -1335,7 +1409,7 @@ print(later)
 
     const labels = (source: string): string[] => {
         const opened = open(source)
-        return completion(analyzer, opened.document, opened.cursor).map(i => i.label)
+        return completion(analyzer, opened.document, opened.cursor).filter(i => !i.sortText?.startsWith("~")).map(i => i.label)
     }
 
     check("completion: an instance offers its members, the inherited ones, and its class",

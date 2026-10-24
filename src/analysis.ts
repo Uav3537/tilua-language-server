@@ -626,14 +626,17 @@ export class Analyzer {
         const globals = script ? [...context.globals, "script"] : context.globals
 
         const { program, errors, directives } = parseWithRecovery(source)
-        // A name nothing declares is only an error against type libraries:
-        // without one, `print` itself is undeclared.
-        const reportUndeclared = context.libs.length > 0
-        const scopes = analyzeScopes(program, { builtinGlobals: [...globals], reportUndeclared })
+        // Lua's standard library is always there, so a name nothing declares
+        // is an error — unless the project left it out (`noLib`) and named no
+        // library either: then `print` itself is undeclared.
+        const noLib = context.project.config?.noLib ?? false
+        const reportUndeclared = context.libs.length > 0 || !noLib
+        const scopes = analyzeScopes(program, { builtinGlobals: [...globals], reportUndeclared, noLib })
         const dependencies = new Map(context.reads)
         const imports = new Map<string, ModuleExports>()
         const types = analyzeTypes(program, scopes, {
             libs,
+            noLib,
             reportUnknownTypes: reportUndeclared,
             resolveModule: specifier => {
                 if (!path) return undefined

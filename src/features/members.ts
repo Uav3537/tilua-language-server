@@ -1,5 +1,5 @@
 /** What members a type has — shared by completion and signature help. */
-import { formatType, type FunctionType, type ObjectProperty, type Type } from "@tilua/parser"
+import { formatType, union, withThis, withoutNil, type FunctionType, type ObjectProperty, type Type } from "@tilua/parser"
 
 export interface Member {
     name: string
@@ -31,6 +31,7 @@ export function membersOf(
     type: Type | undefined,
     aliases: ReadonlyMap<string, Type>,
     seen = new Set<Type>(),
+    receiver: Type | undefined = type,
 ): Member[] {
     if (!type || seen.has(type)) return []
     seen.add(type)
@@ -39,7 +40,10 @@ export function membersOf(
         case "object": {
             const out: Member[] = []
             for (const [name, property] of type.properties) {
-                out.push({ name, property, isMethod: takesSelf(property.type) })
+                // A member that names `this` names the value it is read from.
+                const held = receiver ? withThis(property.type, receiver) : property.type
+                const own = held === property.type ? property : { ...property, type: held }
+                out.push({ name, property: own, isMethod: takesSelf(held) })
             }
             // `{ [("a" | "b")]: V }` covers a countable set of keys, so those
             // keys are members too — optional, since an index signature does
@@ -56,22 +60,24 @@ export function membersOf(
             // members of their own; a `A & B` object contributes both sides.
             const merged = new Map<string, Member>()
             for (const part of type.types) {
-                for (const member of membersOf(part, aliases, seen)) merged.set(member.name, member)
+                for (const member of membersOf(part, aliases, seen, receiver)) merged.set(member.name, member)
             }
             return [...merged.values()]
         }
         case "union": {
-            const perBranch = type.types.map(part => membersOf(part, aliases, seen))
+            // Each branch is read on its own: branches that share a part
+            // (`(Base & A) | (Base & B)`) each have that part's members.
+            const perBranch = type.types.map(part => membersOf(part, aliases, new Set(seen), part))
             if (!perBranch.length) return []
             const [first, ...rest] = perBranch
             return first.filter(member => rest.every(other => other.some(m => m.name === member.name)))
         }
         case "genericRef": {
             const alias = aliases.get(type.name)
-            return alias ? membersOf(alias, aliases, seen) : []
+            return alias ? membersOf(alias, aliases, seen, receiver) : []
         }
         case "typeParam":
-            return membersOf(type.constraint, aliases, seen)
+            return membersOf(type.constraint, aliases, seen, receiver)
         // An array and a string have no members of their own: what they
         // answer to is their metatable's — see `metatableMembersOf`.
         default:
@@ -122,7 +128,8 @@ export function signaturesOf(type: Type | undefined, aliases?: ReadonlyMap<strin
 export function signatureLabel(signature: FunctionType): { label: string; parameters: string[]; rest: string[] } {
     const parameters = signature.params.map((p, i) => {
         const name = p.name ?? `arg${i + 1}`
-        return `${name}${p.optional ? "?" : ""}: ${formatType(p.type)}`
+        // `b?: string`: the `?` already says it may be nil.
+        return `${name}${p.optional ? "?" : ""}: ${formatType(p.optional ? union(withoutNil(p.type)) : p.type)}`
     })
     const generics = signature.typeParams?.length ? `<${signature.typeParams.join(", ")}>` : ""
     // A rest parameter, written the way tilua writes one.
