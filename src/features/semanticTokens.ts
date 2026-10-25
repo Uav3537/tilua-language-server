@@ -20,7 +20,7 @@ import { signaturesOf } from "./members.js"
 
 const TOKEN_TYPES = [
     "namespace", "type", "class", "typeParameter", "parameter", "variable",
-    "property", "function", "method", "keyword",
+    "property", "function", "method", "keyword", "label",
 ] as const
 const TOKEN_MODIFIERS = ["declaration", "readonly", "defaultLibrary", "control"] as const
 
@@ -38,12 +38,13 @@ export const semanticTokensLegend: SemanticTokensLegend = {
 const SOFT_KEYWORDS = new Set([
     "type", "declare", "class", "extends", "keyof", "infer", "readonly", "is", "asserts", "satisfies", "typeof",
     "default", "super", "abstract", "implements", "interface", "instanceof", "out", "get", "set",
+    "try", "catch", "finally", "throw",
 ])
 
 /** Soft keywords that belong with `export` / `return` rather than with
  *  `const` / `type`: marked `control`, which the editor extension maps to the
  *  scope themes colour control keywords with. */
-const CONTROL_KEYWORDS = new Set(["default"])
+const CONTROL_KEYWORDS = new Set(["default", "try", "catch", "finally", "throw"])
 
 const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer", "object"])
 
@@ -245,8 +246,21 @@ function identifier(analysis: Analysis, node: AnyNode, parent: AnyNode | undefin
         case "MethodCallExpression":
             if (parent.method === node) return as("method")
             break
-        case "TableExpression":
-            if (isFieldKey(parent, node)) return as("property", ["declaration"])
+        case "TableExpression": {
+            const field = fieldOf(parent, node)
+            if (field) return as(field.method ? "method" : "property", ["declaration"])
+            break
+        }
+        // `outer: for (...)`, and the `break outer` that names it.
+        case "WhileStatement":
+        case "RepeatStatement":
+        case "NumericForStatement":
+        case "GenericForStatement":
+            if (parent.label === node) return as("label", ["declaration"])
+            break
+        case "BreakStatement":
+        case "ContinueStatement":
+            if (parent.label === node) return as("label")
             break
         case "TypeAliasStatement":
         case "ExportTypeAliasStatement":
@@ -339,9 +353,9 @@ function isFunction(type: Type | undefined): boolean {
     return signaturesOf(type).length > 0
 }
 
-function isFieldKey(table: AnyNode, key: AnyNode): boolean {
-    const fields = table.fields as { type: string; key?: unknown }[]
-    return fields.some(f => f.type === "TableFieldNamed" && f.key === key)
+function fieldOf(table: AnyNode, key: AnyNode): { method?: true } | undefined {
+    const fields = table.fields as { type: string; key?: unknown; method?: true }[]
+    return fields.find(f => f.type === "TableFieldNamed" && f.key === key)
 }
 
 /** Is `name` a type parameter at this point — declared by an enclosing

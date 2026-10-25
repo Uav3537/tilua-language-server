@@ -184,6 +184,20 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     contains("semantic: `infer` is a keyword", conditional, "infer:keyword")
     contains("semantic: the inferred name", conditional, "R:typeParameter.declaration")
 
+    // `try`, `catch`, `finally` and `throw` are soft: a promise's `catch` and
+    // `finally` are methods still.
+    const attempt = tokensOf(`try {\n    throw "x"\n} catch (e) {\n    print(e)\n} finally { }\nconst p = { catch: print }\np:catch(1)\n`)
+    for (const word of ["try", "throw", "catch", "finally"]) {
+        contains(`semantic: \`${word}\` is a control keyword`, attempt, `${word}:keyword.control`)
+    }
+    contains("semantic: what a catch names is a variable", attempt, "e:variable.declaration")
+    const sugar = tokensOf(`const o = {\n    n: 1,\n    get(): number { return this.n },\n}\nouter: for (i = 1, 2) {\n    for (j = 1, 2) { break outer }\n}\n`)
+    contains("semantic: an object's method", sugar, "get:method.declaration")
+    contains("semantic: a loop's label", sugar, "outer:label.declaration")
+    contains("semantic: the label a break names", sugar, "outer:label")
+    check("semantic: a promise's catch is no keyword", attempt.filter(t => t.startsWith("catch:")),
+        ["catch:keyword.control", "catch:property.declaration", "catch:method"])
+
     // A method's `this` and a `function T:m()`'s `self` are parameters the
     // parser adds, with the span of what implies them. Nothing there is theirs
     // to colour: `function` stays a keyword, `T` stays the table.
@@ -358,8 +372,10 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`const Base = { ping: () => 1 }\nfunction f(wait: number = Base.‸) { return wait }\n`), "ping")
     check("completion: an array's own members are only its length",
         labelsAt(`const xs = [1, 2]\nxs.‸\n`), ["length"])
-    check("completion: `..` is concatenation, not member access",
-        labelsAt(`const alpha = 1\nprint("a" ..‸)\n`).includes("alpha"), true)
+    check("completion: `+` joining a string offers names",
+        labelsAt(`const alpha = 1\nprint("a" + ‸)\n`).includes("alpha"), true)
+    check("completion: a spread's dots are not member access",
+        labelsAt(`const alpha = [1]\nprint([...‸])\n`).includes("alpha"), true)
     const maybe = `type Part = { Name: string, Destroy: (self: Part) => nil }\ndeclare part: Part | nil\n`
     check("completion: `?.` offers the members of the non-nil type",
         labelsAt(`${maybe}part?.‸\n`).sort(), ["Destroy", "Name"])
@@ -617,6 +633,14 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     }
     check("diagnostics: bare `...` is a syntax error that says what to write",
         diagnostics(analyzer.get(open(`function f(...) {}\n`).document)).some(d => d.message.startsWith("tilua has no bare '...'")), true)
+    check("diagnostics: a test the type already answers is a warning",
+        diagnostics(analyzer.get(open(`function f(a: unknown) {\n    if (a ~= 1) {\n        if (a == 1) { print(a) }\n    }\n}\n`).document))
+            .map(d => [d.message, d.severity]),
+        [["This comparison is always false: 'Exclude<unknown, 1>' and '1' have no value in common", 2]])
+    check("diagnostics: code after a return is dimmed, not an error",
+        diagnostics(analyzer.get(open(`function f(): number {\n    return 1\n    print(2)\n    print(3)\n}\n`).document))
+            .map(d => [d.message, d.severity, d.tags, d.range.start.line, d.range.end.line]),
+        [["Unreachable code detected", 4, [1], 2, 3]])
 }
 
 // --- hover inside a destructuring pattern --------------------------------
@@ -1156,7 +1180,7 @@ print(later)
         pathToFileURL(join(dirname(root), `tilua-no-config-${Date.now()}`, "x.tilua")).href, "tilua", 1, "print(1)\n"))
     check("projects: a file no config covers has the language and its standard library, and nothing more",
         [loose.project.config, [...loose.types.aliases.keys()].sort().join(" ")],
-        [undefined, "Console ConstructorParameters Extract Falsy InstanceType Iteration Mutable NonNullable Omit Parameters Partial PcallResult Pick Readonly Record Required ReturnType Truthy"])
+        [undefined, "Console ConstructorParameters EntriesObject Extract Falsy FromEntries InstanceType Iteration ListEntries ListKeys ListValues MappedList Mutable NonNullable Omit Parameters Partial PcallResult Pick Readonly Record Required ReturnType Truthy"])
 
     check("projects: two configs in one folder are reported on both",
         projects.get(openFile("dup/x.tilua", "")).project.problems.length, 2)

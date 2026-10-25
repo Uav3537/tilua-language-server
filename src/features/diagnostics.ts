@@ -1,5 +1,5 @@
 /** Syntax errors, scope errors and type errors, as one list. */
-import { DiagnosticSeverity, type Diagnostic } from "vscode-languageserver"
+import { DiagnosticSeverity, DiagnosticTag, type Diagnostic } from "vscode-languageserver"
 import { applyDirectives, UNUSED_EXPECT_ERROR } from "@tilua/parser"
 import type { Analysis } from "../analysis.js"
 import { toRange, toPosition } from "../ast-utils.js"
@@ -32,7 +32,7 @@ export function diagnostics(analysis: Analysis): Diagnostic[] {
         })),
         ...analysis.types.diagnostics.map(d => ({
             range: toRange(d.node),
-            severity: DiagnosticSeverity.Error,
+            severity: d.severity === "warning" ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
             source: "tilua",
             code: "type",
             message: d.message,
@@ -50,6 +50,19 @@ export function diagnostics(analysis: Analysis): Diagnostic[] {
             source: "tilua",
             code: "directive",
             message: UNUSED_EXPECT_ERROR,
+        })
+    }
+
+    // Code after a `return`, `break` or `continue` — or a call that never
+    // returns — is no error, as in TypeScript: it is shown dimmed.
+    for (const { from, to } of analysis.types.unreachable) {
+        out.push({
+            range: { start: toRange(from).start, end: toRange(to).end },
+            severity: DiagnosticSeverity.Hint,
+            tags: [DiagnosticTag.Unnecessary],
+            source: "tilua",
+            code: "unreachable",
+            message: "Unreachable code detected",
         })
     }
 

@@ -383,7 +383,8 @@ function stringLiterals(type: Type | undefined, aliases: ReadonlyMap<string, Typ
 }
 
 /** The member operator right before the word being typed, if there is one.
- *  `..` is concatenation and `1.` is a number, neither of which has members. */
+ *  `...` is a spread, `..` the Lua join tilua reads as `+`, and `1.` a
+ *  number: none of them has members. */
 function memberOperator(source: string, wordStart: number): "." | ":" | undefined {
     const ch = source[wordStart - 1]
     if (ch === ":") return source[wordStart - 2] === ":" ? undefined : ":"
@@ -570,6 +571,7 @@ function contextKeywords(before: string): CompletionItem[] {
 const KEYWORDS = [
     "const", "let", "function", "return", "if", "elseif", "else",
     "for", "in", "while", "do", "repeat", "until", "break", "continue",
+    "try", "catch", "finally", "throw",
     "type", "declare", "export", "import", "class", "abstract", "this", "super",
     "and", "or", "not", "typeof", "true", "false", "nil",
 ]
