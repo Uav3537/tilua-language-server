@@ -570,7 +570,7 @@ function inTypePosition(path: readonly Spanned[]): boolean {
 }
 
 const PRIMITIVES = [
-    "any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer", "object",
+    "any", "unknown", "never", "nil", "void", "boolean", "number", "string", "thread", "buffer", "object",
 ]
 
 /** The `sortText` prefix of a method the value's metatable lends it, offered

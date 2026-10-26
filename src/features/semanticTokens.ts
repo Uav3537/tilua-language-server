@@ -46,7 +46,7 @@ const SOFT_KEYWORDS = new Set([
  *  scope themes colour control keywords with. */
 const CONTROL_KEYWORDS = new Set(["default", "try", "catch", "finally", "throw"])
 
-const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer", "object"])
+const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "void", "boolean", "number", "string", "thread", "buffer", "object"])
 
 interface Entry {
     line: number

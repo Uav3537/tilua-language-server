@@ -1276,7 +1276,7 @@ print(later)
         at(`const part = Instance.new("Part")\npart:Des‸troy()\n`),
     ], [
         "push: (self: number[], ...args: number[]) => number",
-        "Destroy: (self: Instance) => nil",
+        "Destroy: (self: Instance) => void",
     ])
 }
 

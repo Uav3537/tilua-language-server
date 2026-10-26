@@ -77,7 +77,7 @@ const UNNAMED = new Set([
 
 type AnyNode = Spanned & Record<string, unknown>
 
-const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "boolean", "number", "string", "thread", "buffer", "object"])
+const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "void", "boolean", "number", "string", "thread", "buffer", "object"])
 
 function describe(analysis: Analysis, path: readonly Spanned[], index: number): string | undefined {
     const { types } = analysis
