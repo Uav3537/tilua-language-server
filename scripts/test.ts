@@ -390,6 +390,14 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         labelsAt(`${indexed}function f<K extends R["RemoteMap"]["‸"]>(k: K) {}\n`),
         labelsAt(`${indexed}print(t["‸"])\n`).sort(),
     ], [["ClassMap", "RemoteMap"], ["Char"], ["x", "y"]])
+    check("completion: a destructuring pattern's keys are what it reads",
+        labelsAt(`const { ‸ } = pcall(() => 1)\n`).sort(), ["data", "error", "success"])
+    check("completion: a pattern's half-typed key, but those it takes",
+        labelsAt(`const { success, s‸ } = pcall(() => 1)\n`).sort(), ["data", "error"])
+    check("completion: a nested pattern and a parameter's",
+        [labelsAt(`declare o: { p: { x: number, y: number } }\nconst { p: { ‸ } } = o\n`).sort(),
+            labelsAt(`function f({ ‸ }: { a: number, b: string }) {}\n`).sort()],
+        [["x", "y"], ["a", "b"]])
     check("completion: a broken field leaves the rest of the object",
         labelsAt(`const Config = {\n    a: 1,\n    b: ,\n    c: "x"\n    d: 2,\n}\nConfig.‸\n`).sort(), ["a", "b", "c", "d"])
 }

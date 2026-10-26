@@ -14,7 +14,7 @@ import {
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import {
     formatType, isClassType, isUnassignedGlobal, parseWithRecovery, numberType,
-    type Expression, type Program, type Type, type TypeNode,
+    type Expression, type ObjectPattern, type ObjectPatternProperty, type Program, type Type, type TypeNode,
 } from "@tilua/parser"
 import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
@@ -103,6 +103,10 @@ export function completion(
     // A key of an object literal written where a type says what belongs in it.
     const keys = objectKeyItems(first.analysis, first.path, source.slice(end))
     if (keys) return keys
+
+    // A key of a destructuring pattern: `const { | } = pcall(f)`.
+    const patternKeys = patternKeyItems(first.analysis, first.path)
+    if (patternKeys) return patternKeys
 
     // A type position wants type names, not values.
     if (inTypePosition(first.path)) {
@@ -310,6 +314,35 @@ function objectKeyItems(
             kind: CompletionItemKind.Field,
             detail: `${member.property.optional ? "?" : ""}: ${formatType(member.property.type)}`,
             insertText: colon ? member.name : `${member.name}: `,
+        }))
+}
+
+/** `const { | } = v`: the members of what the pattern reads, but those it
+ *  already takes. Only at a key — `{ a: | }` names a new binding. */
+function patternKeyItems(analysis: Analysis, path: readonly Spanned[]): CompletionItem[] | undefined {
+    const index = path.findLastIndex(
+        n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
+    )
+    const property = index > 0 ? (path[index - 1] as unknown as ObjectPatternProperty) : undefined
+    const pattern = index > 1 ? (path[index - 2] as unknown as ObjectPattern) : undefined
+    if (property?.type !== "ObjectPatternProperty" || pattern?.type !== "ObjectPattern") return undefined
+    if (property.key !== (path[index] as unknown)) return undefined
+    const members = membersOf(analysis.types.patternSourceType.get(pattern), analysis.types.aliases)
+    if (!members.length) return undefined
+
+    const written = new Set<string>()
+    for (const other of pattern.properties) {
+        if (other === property || other.computed) continue
+        const key = other.key as { type: string; name?: string; value?: string }
+        if (key.type === "Identifier") written.add(key.name!)
+        else if (key.type === "StringLiteral") written.add(key.value!)
+    }
+    return members
+        .filter(member => !written.has(member.name))
+        .map(member => ({
+            label: member.name,
+            kind: CompletionItemKind.Field,
+            detail: `${member.property.optional ? "?" : ""}: ${formatType(member.property.type)}`,
         }))
 }
 
