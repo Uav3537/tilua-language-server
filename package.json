@@ -1,6 +1,6 @@
 {
   "name": "@tilua/language-server",
-  "version": "8.0.0",
+  "version": "8.1.0",
   "description": "Language server for tilua (LSP), built on @tilua/parser",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -41,7 +41,7 @@
     "typescript": "^5.0.4"
   },
   "dependencies": {
-    "@tilua/parser": "^8.0.0",
+    "@tilua/parser": "^8.1.0",
     "vscode-languageserver": "^10.1.1",
     "vscode-languageserver-textdocument": "^1.0.14"
   },
