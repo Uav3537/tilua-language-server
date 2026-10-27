@@ -191,6 +191,10 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         contains(`semantic: \`${word}\` is a control keyword`, attempt, `${word}:keyword.control`)
     }
     contains("semantic: what a catch names is a variable", attempt, "e:variable.declaration")
+    // `of` is a keyword only in a loop's header; anywhere else it is a name.
+    const walked = tokensOf(`for (const x of [1]) { print(x) }\nconst of = 1\nprint(of)\n`)
+    check("semantic: `of` in a loop is a control keyword, and a name elsewhere", walked.filter(t => t.startsWith("of:")),
+        ["of:keyword.control", "of:variable.declaration.readonly", "of:variable.readonly"])
     const sugar = tokensOf(`const o = {\n    n: 1,\n    get(): number { return this.n },\n}\nouter: for (i = 1, 2) {\n    for (j = 1, 2) { break outer }\n}\n`)
     contains("semantic: an object's method", sugar, "get:method.declaration")
     contains("semantic: a loop's label", sugar, "outer:label.declaration")
@@ -362,9 +366,9 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     check("completion: a method body is code, not members",
         labelsAt(`class A {\n    function f() {\n        ‸\n    }\n}\n`).includes("constructor"), false)
     check("completion: `--@` offers the directives",
-        labelsAt(`--@‸\nconst x = 1\n`), ["@tilua-nocheck", "@tilua-ignore", "@tilua-expect-error"])
+        labelsAt(`--@‸\nconst x = 1\n`), ["@tilua-nocheck", "@tilua-ignore", "@tilua-expect-error", "@tilua-expect-warning"])
     check("completion: `-- @tilua-ex` still offers them",
-        labelsAt(`const y = 2\n-- @tilua-ex‸\nconst x = 1\n`).length, 3)
+        labelsAt(`const y = 2\n-- @tilua-ex‸\nconst x = 1\n`).length, 4)
     contains("completion: `game.` alone on a line",labelsAt(`game.‸\n`), "Workspace")
     contains("completion: a chain `game.Workspace.`", labelsAt(`game.Workspace.‸\n`), "Name")
     contains("completion: `:` on a string reaches the string library", labelsAt(`const s = "abc"\ns:‸\n`), "upper")
@@ -700,6 +704,19 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
         diagnosticsOf(`--@tilua-nocheck\nconst a: number = "x"\nnope()\n`),
         diagnosticsOf(`--@tilua-nocheck\nconst a = \n`).length,
     ], [[], ["Unused '@tilua-expect-error' directive"], [], 1])
+    const severityOf = (src: string): string[] => diagnostics(analyzer.get(open(src).document))
+        .map(d => `${d.severity === 2 ? "warning" : "error"}: ${d.message}`)
+    check("directives: expect-warning takes a warning, expect-error does not", [
+        severityOf(`declare n: number\n--@tilua-expect-warning\nprint(n == "x")\n`),
+        severityOf(`declare n: number\n--@tilua-expect-error\nprint(n == "x")\n`),
+        severityOf(`--@tilua-expect-warning\nconst a = 1\n`),
+        severityOf(`declare n: number\n--@tilua-ignore\nprint(n == "x")\n`),
+    ], [
+        [],
+        ["warning: This comparison is always false: 'number' and '\"x\"' have no value in common", "error: Unused '@tilua-expect-error' directive"],
+        ["warning: Unused '@tilua-expect-warning' directive"],
+        [],
+    ])
     check("undeclared: a name nothing declares, and not an assigned global or a declare", [
         diagnosticsOf(`print(typo, game)
 const t = Missing.x
@@ -1365,7 +1382,7 @@ print(later)
         `    GetSettings: ReplicatedStorage:FindFirstChild("GetSettings") as RemoteFunction,`,
         `}`,
         `function scan() {`,
-        `    for (const [RemoteName, Remote] in pairs(Remotes)) {`,
+        `    for (const [RemoteName, Remote] of pairs(Remotes)) {`,
     ].join("\n") + "\n"
     const labelsAt = (src: string): string[] => {
         const opened = open(src)

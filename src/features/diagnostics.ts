@@ -1,6 +1,6 @@
 /** Syntax errors, scope errors and type errors, as one list. */
 import { DiagnosticSeverity, DiagnosticTag, type Diagnostic } from "vscode-languageserver"
-import { applyDirectives, UNUSED_EXPECT_ERROR } from "@tilua/parser"
+import { applyDirectives, UNUSED_EXPECT_ERROR, UNUSED_EXPECT_WARNING, type Directive } from "@tilua/parser"
 import type { Analysis } from "../analysis.js"
 import { toRange, toPosition } from "../ast-utils.js"
 
@@ -39,19 +39,23 @@ export function diagnostics(analysis: Analysis): Diagnostic[] {
         })),
     ]
 
-    // `--@tilua-nocheck`, `--@tilua-ignore`, `--@tilua-expect-error`.
-    const { kept, unusedExpectErrors } = applyDirectives(analysis.directives, semantic, d => d.range.start.line + 1)
+    // `--@tilua-nocheck`, `--@tilua-ignore`, `--@tilua-expect-error`,
+    // `--@tilua-expect-warning`.
+    const { kept, unusedExpectErrors, unusedExpectWarnings } = applyDirectives(analysis.directives, semantic,
+        d => d.range.start.line + 1, d => d.severity === DiagnosticSeverity.Warning)
     out.push(...kept)
-    for (const directive of unusedExpectErrors) {
+    const unused = (directive: Directive, severity: DiagnosticSeverity, message: string): void => {
         const start = toPosition(directive.line, directive.column)
         out.push({
-            range: { start, end: { line: start.line, character: start.character + "--@tilua-expect-error".length } },
-            severity: DiagnosticSeverity.Error,
+            range: { start, end: { line: start.line, character: start.character + `--@tilua-${directive.kind}`.length } },
+            severity,
             source: "tilua",
             code: "directive",
-            message: UNUSED_EXPECT_ERROR,
+            message,
         })
     }
+    for (const directive of unusedExpectErrors) unused(directive, DiagnosticSeverity.Error, UNUSED_EXPECT_ERROR)
+    for (const directive of unusedExpectWarnings) unused(directive, DiagnosticSeverity.Warning, UNUSED_EXPECT_WARNING)
 
     // Code after a `return`, `break` or `continue` — or a call that never
     // returns — is no error, as in TypeScript: it is shown dimmed.

@@ -158,9 +158,10 @@ export function completion(
 }
 
 const DIRECTIVES = [
-    ["tilua-nocheck", "No scope or type errors anywhere in this file"],
-    ["tilua-ignore", "No errors on the next line of code"],
+    ["tilua-nocheck", "No scope or type errors or warnings anywhere in this file"],
+    ["tilua-ignore", "No errors or warnings on the next line of code"],
     ["tilua-expect-error", "No errors on the next line of code, and an error if it has none"],
+    ["tilua-expect-warning", "No warnings on the next line of code, and a warning if it has none"],
 ] as const
 
 /** After `--@` (or `-- @`) on a line: the directives, or `undefined` when the
@@ -603,7 +604,7 @@ function contextKeywords(before: string): CompletionItem[] {
 /** tilua has no `then` or `end`: blocks are braces. */
 const KEYWORDS = [
     "const", "let", "function", "return", "if", "elseif", "else",
-    "for", "in", "while", "do", "repeat", "until", "break", "continue",
+    "for", "of", "in", "while", "do", "repeat", "until", "break", "continue",
     "try", "catch", "finally", "throw",
     "type", "declare", "export", "import", "class", "abstract", "this", "super",
     "and", "or", "not", "typeof", "true", "false", "nil",

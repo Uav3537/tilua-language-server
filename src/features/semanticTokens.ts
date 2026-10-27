@@ -38,13 +38,13 @@ export const semanticTokensLegend: SemanticTokensLegend = {
 const SOFT_KEYWORDS = new Set([
     "type", "declare", "class", "extends", "keyof", "infer", "readonly", "is", "asserts", "satisfies", "typeof",
     "default", "super", "abstract", "implements", "interface", "instanceof", "out", "get", "set",
-    "try", "catch", "finally", "throw",
+    "try", "catch", "finally", "throw", "of",
 ])
 
 /** Soft keywords that belong with `export` / `return` rather than with
  *  `const` / `type`: marked `control`, which the editor extension maps to the
  *  scope themes colour control keywords with. */
-const CONTROL_KEYWORDS = new Set(["default", "try", "catch", "finally", "throw"])
+const CONTROL_KEYWORDS = new Set(["default", "try", "catch", "finally", "throw", "of"])
 
 const PRIMITIVES = new Set(["any", "unknown", "never", "nil", "void", "boolean", "number", "string", "thread", "buffer", "object"])
 
