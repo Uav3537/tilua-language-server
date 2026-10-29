@@ -71,35 +71,32 @@ export function completion(
     // the same line, since the patch never spans one.
     const at: Position = { line: position.line, character: position.character - (offset - start) }
 
-    let first: { analysis: Analysis; path: Spanned[] } | undefined
+    // Which stand-in lands where is a question for the parser alone; only the
+    // one that is used is analyzed. Analyzing a large file is most of what a
+    // completion costs, and each stand-in tried used to be one more.
+    let firstPatched: string | undefined
     for (const standIn of standIns) {
         const patched = source.slice(0, start) + standIn + source.slice(end)
-        const analysis = analyzer.analyze(document.uri, -1, patched)
-        const path = pathAt(analysis.program, at, true)
-        const index = path.findLastIndex(
-            n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
-        )
-        const parent = index > 0 ? path[index - 1] : undefined
-        // The placeholder as the member's name — not as an argument of
-        // `obj:m(|)`, nor as the object of `|.x`, which are ordinary values.
-        const named = parent?.type === "MemberExpression" ? (parent as unknown as { property: Spanned }).property
-            : parent?.type === "MethodCallExpression" ? (parent as unknown as { method: Spanned }).method
-            : undefined
-        if (parent && named === path[index]) {
+        if (memberPlaceholder(parseWithRecovery(patched).program, at)) {
+            const analysis = analyzer.analyze(document.uri, -1, patched)
+            const { parent, path, index } = memberPlaceholder(analysis.program, at)!
             return memberItems(analysis, parent, path.slice(0, index - 1))
         }
-        first ??= { analysis, path }
+        firstPatched ??= patched
     }
 
     // After `.` or `:` only members make sense. If none could be found, an
     // empty list is honest; the globals are never what was meant there.
-    if (operator || !first) return []
+    if (operator || firstPatched === undefined) return []
 
     // Directly in a class body, where a member goes. A half-typed word there
     // is a field with neither type nor value, which does not parse — so the
     // placeholder is tried as a typed field instead.
-    const members = classMemberItems(analyzer, document.uri, source, start, end, at)
+    const members = classMemberItems(source, start, end, at)
     if (members) return members
+
+    const analysis = analyzer.analyze(document.uri, -1, firstPatched)
+    const first = { analysis, path: pathAt(analysis.program, at, true) }
 
     // A key of an object literal written where a type says what belongs in it.
     const keys = objectKeyItems(first.analysis, first.path, source.slice(end))
@@ -158,6 +155,21 @@ export function completion(
     ]
 }
 
+/** The placeholder at `at` as the name of a member — not as an argument of
+ *  `obj:m(|)`, nor as the object of `|.x`, which are ordinary values — with
+ *  the path down to it; `undefined` when it is not one. */
+function memberPlaceholder(program: Program, at: Position): { parent: Spanned; path: Spanned[]; index: number } | undefined {
+    const path = pathAt(program, at, true)
+    const index = path.findLastIndex(
+        n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
+    )
+    const parent = index > 0 ? path[index - 1] : undefined
+    const named = parent?.type === "MemberExpression" ? (parent as unknown as { property: Spanned }).property
+        : parent?.type === "MethodCallExpression" ? (parent as unknown as { method: Spanned }).method
+        : undefined
+    return parent && named === path[index] ? { parent, path, index } : undefined
+}
+
 const DIRECTIVES = [
     ["tilua-nocheck", "No scope or type errors or warnings anywhere in this file"],
     ["tilua-ignore", "No errors or warnings on the next line of code"],
@@ -188,8 +200,6 @@ function directiveCompletion(document: TextDocument, position: Position): Comple
 /** The keywords that start a member, when the cursor is directly in a class
  *  body — not in a method, where ordinary code goes. `undefined` elsewhere. */
 function classMemberItems(
-    analyzer: Analyzer,
-    uri: string,
     source: string,
     start: number,
     end: number,
@@ -197,7 +207,7 @@ function classMemberItems(
 ): CompletionItem[] | undefined {
     if (!source.includes("class")) return undefined
     const patched = source.slice(0, start) + `${PLACEHOLDER}: any` + source.slice(end)
-    const path = pathAt(analyzer.analyze(uri, -1, patched).program, at, true)
+    const path = pathAt(parseWithRecovery(patched).program, at, true)
     const index = path.findLastIndex(
         n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
     )
