@@ -22,7 +22,7 @@ import { dirname, resolve } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import {
     parse, parseWithRecovery, analyzeScopes, analyzeTypes, moduleExports, getBinding,
-    findConfig, resolveTypeLibraries, moduleCandidates, sourceMapTypes,
+    findConfig, resolveTypeLibraries, moduleCandidates, sourceMapTypes, sourceMapOf, outputPathOf,
     type Program, type ScopeAnalysis, type TypeAnalysis, type ParseError, type ModuleExports,
     type Binding, type Identifier, type Type, type TiluaConfig, type ConfigProblem, type ProjectHost,
     type SourceMapTypes, type Directives, type GenericRefType,
@@ -69,6 +69,9 @@ export interface AnalyzerOptions {
     /** The open document for a file path, if there is one. */
     openDocument?: (path: string) => TextDocument | undefined
 }
+
+/** How a listing of a folder's files is keyed, apart from its folders'. */
+const FILES = "\0files:"
 
 /** The classes a set of definitions declares. */
 function classesOf(libs: readonly Program[]): Set<string> {
@@ -460,6 +463,13 @@ export class Analyzer {
                 listings.set(directory, names?.join("\n"))
                 return names
             },
+            // A Rojo project's tree is its folders' files: one added, removed
+            // or renamed is a different tree.
+            listFiles: directory => {
+                const names = this.listDirectory(directory, true)
+                listings.set(FILES + directory, names?.join("\n"))
+                return names
+            },
         }
 
         const lookup = findConfig(path, host)
@@ -475,21 +485,19 @@ export class Analyzer {
             if (program) libs.push(program)
         }
 
+        // The instance tree: the sourcemap or Rojo project the config names,
+        // or the `default.project.json` beside it. One found by itself is
+        // only read where there are instances to type — a library declares
+        // `Instance` — and what is wrong with it is no one's to fix.
         let sourceMap: SourceMapTypes | undefined
-        if (config.sourceMap) {
-            const text = host.readFile(config.sourceMap)
-            if (text === undefined) {
-                problems.push({
-                    file: config.path,
-                    message: `Cannot find the sourceMap file ${config.sourceMap}`,
-                    ...optionPosition(config, "sourceMap"),
-                })
-            } else {
-                const result = this.sourceMap(config.sourceMap, text, libs, libraries.files)
-                if (result.problem) problems.push({ file: config.sourceMap, message: result.problem, line: 1, column: 1 })
-                sourceMap = result.types
-                if (sourceMap) libs.push(sourceMap.program)
-            }
+        const tree = sourceMapOf(config, host)
+        if (tree && "problem" in tree) {
+            if (tree.named) problems.push({ file: config.path, message: tree.problem, ...optionPosition(config, "sourceMap") })
+        } else if (tree && (tree.named || globalsOf(libs).includes("game"))) {
+            const result = this.sourceMap(tree.path, tree.text, libs, libraries.files)
+            if (result.problem && tree.named) problems.push({ file: tree.path, message: result.problem, line: 1, column: 1 })
+            sourceMap = result.types
+            if (sourceMap) libs.push(sourceMap.program)
         }
 
         return {
@@ -546,24 +554,29 @@ export class Analyzer {
 
     /** Does every folder still hold the names it did? */
     private sameListings(listings: ReadonlyMap<string, string | undefined>): boolean {
-        for (const [directory, names] of listings) if (this.listDirectory(directory)?.join("\n") !== names) return false
+        for (const [key, names] of listings) {
+            const files = key.startsWith(FILES)
+            if (this.listDirectory(files ? key.slice(FILES.length) : key, files)?.join("\n") !== names) return false
+        }
         return true
     }
 
-    /** The folders in a folder, listed at most once a sweep, like `stamp`. */
-    private listDirectory(directory: string): string[] | undefined {
-        const known = this.listingsThisSweep?.get(directory)
-        if (known !== undefined || this.listingsThisSweep?.has(directory)) return known
+    /** The folders in a folder — or its files — listed at most once a
+     *  sweep, like `stamp`. */
+    private listDirectory(directory: string, files = false): string[] | undefined {
+        const key = files ? FILES + directory : directory
+        const known = this.listingsThisSweep?.get(key)
+        if (known !== undefined || this.listingsThisSweep?.has(key)) return known
         let names: string[] | undefined
         try {
             names = readdirSync(directory, { withFileTypes: true })
-                .filter(entry => entry.isDirectory() || entry.isSymbolicLink())
+                .filter(entry => (files ? entry.isFile() : entry.isDirectory() || entry.isSymbolicLink()))
                 .map(entry => entry.name)
                 .sort()
         } catch {
             names = undefined
         }
-        this.listingsThisSweep?.set(directory, names)
+        this.listingsThisSweep?.set(key, names)
         return names
     }
 
@@ -620,8 +633,10 @@ export class Analyzer {
     private analyzeModule(uri: string, version: number, source: string, importing: Set<string>): Analysis {
         const path = pathOfUri(uri)
         const context = this.contextFor(path)
-        // A file the sourcemap maps has its own `script`.
-        const script = path ? context.sourceMap?.scriptFor(path) : undefined
+        // A file the sourcemap maps has its own `script`. The sourcemap lists
+        // what Rojo syncs: the file this one compiles to.
+        const config = context.project.config
+        const script = path ? context.sourceMap?.scriptFor(config ? outputPathOf(config, path) : path) : undefined
         const libs = script ? [...context.libs, script] : context.libs
         const globals = script ? [...context.globals, "script"] : context.globals
 

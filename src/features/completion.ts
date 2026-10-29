@@ -20,6 +20,7 @@ import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
 import { importItems, serviceItems } from "./autoImport.js"
 import { importCompletion } from "./imports.js"
+import { callSignaturesAt } from "./signatureHelp.js"
 import { membersOf, metatableMembersOf, signaturesOf, signatureLabel } from "./members.js"
 
 const PLACEHOLDER = "__tiluaCompletion__"
@@ -250,6 +251,10 @@ function stringCompletion(
     const values = [...new Set([
         ...stringLiterals(expected, analysis.types.aliases),
         ...indexKeys(analysis, position, literal),
+        // An overloaded call takes the strings any of its overloads names
+        // there — `workspace:WaitForChild("|")` lists the children — though
+        // the one the string chose so far takes any string.
+        ...overloadStrings(analysis, position),
     ])]
     if (!values.length) return []
 
@@ -267,6 +272,17 @@ function stringCompletion(
         kind: CompletionItemKind.Constant,
         ...(range ? { textEdit: { range, newText: value } } : {}),
     }))
+}
+
+/** The strings the overloads of the call the cursor is in name for the
+ *  argument it is in. */
+function overloadStrings(analysis: Analysis, position: Position): string[] {
+    const found = callSignaturesAt(analysis, position)
+    if (!found || found.signatures.length < 2) return []
+    return found.signatures.flatMap(signature => {
+        const param = signature.params[found.parameter]
+        return param ? stringLiterals(param.type, analysis.types.aliases) : []
+    })
 }
 
 function stringAt(program: Program, position: Position): Spanned | undefined {

@@ -8,7 +8,7 @@
  */
 import type { Position, SignatureHelp, SignatureInformation } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
-import { parseWithRecovery, type Expression, type Program } from "@tilua/parser"
+import { parseWithRecovery, type Expression, type FunctionType, type Program } from "@tilua/parser"
 import type { Analyzer, Analysis } from "../analysis.js"
 import { containsPosition, pathAt, type Spanned } from "../ast-utils.js"
 import { signaturesOf, signatureLabel } from "./members.js"
@@ -45,9 +45,14 @@ function callAt(program: Program, position: Position): CallLike | undefined {
     ) as CallLike | undefined
 }
 
-function helpAt(analysis: Analysis, position: Position): SignatureHelp | null {
+/** The signatures of the call the cursor is in — every overload — and which
+ *  of their parameters the cursor's argument is. */
+export function callSignaturesAt(
+    analysis: Analysis,
+    position: Position,
+): { signatures: FunctionType[]; parameter: number; written: number; selfOffset: number } | undefined {
     const call = callAt(analysis.program, position)
-    if (!call) return null
+    if (!call) return undefined
 
     const callee = call.type === "CallExpression"
         ? (call as unknown as { callee: Expression }).callee
@@ -59,11 +64,18 @@ function helpAt(analysis: Analysis, position: Position): SignatureHelp | null {
         : methodType(analysis, call)
 
     const signatures = signaturesOf(calleeType, analysis.types.aliases)
-    if (!signatures.length) return null
+    if (!signatures.length) return undefined
 
     // `:` supplies `self`, so the first written argument is the second param.
     const selfOffset = call.type === "MethodCallExpression" ? 1 : 0
     const written = activeArgument(call, position)
+    return { signatures, parameter: written + selfOffset, written, selfOffset }
+}
+
+function helpAt(analysis: Analysis, position: Position): SignatureHelp | null {
+    const found = callSignaturesAt(analysis, position)
+    if (!found) return null
+    const { signatures, written, selfOffset } = found
 
     // A rest parameter is the last one listed, and takes every argument from
     // its place on.
