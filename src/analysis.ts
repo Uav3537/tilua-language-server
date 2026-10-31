@@ -49,6 +49,14 @@ export interface Analysis {
      *  module's text can change without its exports changing — an edit inside
      *  a function body — and then this analysis is still good. */
     readonly imports: ReadonlyMap<string, ModuleExports>
+    /** Everything the analysis rests on, however far down: `dependencies`, plus
+     *  every module reached through an import, with the text it was read at.
+     *  While these all still hold, nothing can have changed — and that holds
+     *  for a module in an import cycle too, which comparing exports cannot
+     *  tell: two analyses of a cycle never produce the same objects. */
+    closure: Map<string, string | undefined>
+    /** It is part of an import cycle, whose members share one `closure`. */
+    cyclic: boolean
     /** The project the file belongs to. */
     readonly project: Project
 }
@@ -172,27 +180,38 @@ export function pathKey(path: string): string {
  *  there is nothing better yet: its names read as `any`. */
 const CYCLE: ModuleExports = { values: new Map(), types: new Map(), partial: true }
 
+/** How many passes a cycle gets, should its exports never come to rest. */
+const MAX_CYCLE_PASSES = 6
+
 /**
  * One analysis of a module and everything it imports.
  *
  * An import cycle can only be broken by letting one side see the other before
  * it is finished — as `any`. A value exported from the far side and inferred
  * from the near side then comes back as `any` too. So a run that met a cycle
- * goes once more: the modules it analyzed are redone, and where an import
- * meets a module mid-analysis it reads that module's exports from the first
- * pass instead of `any`.
+ * goes again: the modules it analyzed are redone, and where an import meets a
+ * module mid-analysis it reads that module's exports from the pass before
+ * instead of `any`. A type crosses one such import per pass, so a cycle of
+ * several modules takes several: the run stops when a pass changes no export
+ * at those imports, the next one having nothing new to read. What the types
+ * come to must not depend on which file was opened first.
  */
 interface Run {
     /** Modules an import reached while they were still being analyzed. */
     readonly cycles: Set<string>
     /** Modules analyzed in this run — the ones a second pass redoes. */
     readonly analyzed: Set<string>
-    /** Exports from the first pass, read in place of `any` in the second. */
+    /** Exports from the pass before, read in place of `any`. */
     readonly provisional: Map<string, ModuleExports>
-    /** Modules the first pass analyzed that the second has not redone yet.
-     *  Their first-pass entries stay cached until then, for the second pass
-     *  to compare its exports with. */
+    /** Modules an earlier pass analyzed that this one has not redone yet.
+     *  Their entries stay cached until then, for this pass to compare its
+     *  exports with. */
     readonly redo: Set<string>
+    /** The latest analysis of each module the run went through, root included. */
+    readonly latest: Map<string, Analysis>
+    /** Modules whose cached exports stand without a freshness check: the rest
+     *  of a cycle, while one member is redone against them (`redoInCycle`). */
+    readonly settled: ReadonlySet<string>
 }
 
 // --------------------------------------------------------------------------
@@ -262,9 +281,9 @@ export class Analyzer {
     get(document: TextDocument): Analysis {
         const cached = this.cache.get(document.uri)
         const source = document.getText()
-        if (cached && cached.version === document.version && cached.source === source && this.isFresh(cached)) {
-            return cached
-        }
+        const same = cached?.version === document.version && cached.source === source
+        if (cached && same && this.isFresh(cached)) return cached
+        if (cached?.cyclic && this.settleCycleEdit(cached) && same) return cached
         const analysis = this.asModule(document, source) ?? this.analyze(document.uri, document.version, source)
         this.cache.set(document.uri, analysis)
         return analysis
@@ -297,10 +316,17 @@ export class Analyzer {
         const path = pathOfUri(uri)
         if (!path) return this.analyzeModule(uri, version, source, new Set())
         const key = pathKey(path)
+        const speculative = this.readFile(path) !== source
+        if (speculative) {
+            // A patched copy of a cycle's member reads the rest as they stand.
+            const known = this.cache.get(uri) ?? this.modules.get(key)?.analysis
+            const copy = known?.cyclic ? this.redoInCycle(uri, version, source, path, known.closure, true) : undefined
+            if (copy) return copy
+        }
         return this.resolvingCycles(key, () => {
             const analysis = this.analyzeModule(uri, version, source, new Set([key]))
             return { result: analysis, exports: () => this.exportsFrom(analysis, new Set([key])) }
-        })
+        }, speculative)
     }
 
     forget(uri: string): void {
@@ -588,35 +614,156 @@ export class Analyzer {
     // ----------------------------------------------------------------- modules
 
     /** Run one analysis of `root` and everything it imports; if that met an
-     *  import cycle, run it once more with the first pass's exports standing
-     *  in for the `any` the cycle left (see `Run`). A call made while a run is
-     *  already going is part of that run. */
+     *  import cycle, run it again with the last pass's exports standing in for
+     *  the `any` the cycle left, until they settle (see `Run`). A call made
+     *  while a run is already going is part of that run. */
     private resolvingCycles<T>(
         root: string,
         analyzeRoot: () => { result: T; exports: () => ModuleExports | undefined },
+        speculative = false,
     ): T {
         if (this.run) return analyzeRoot().result
-        const run: Run = { cycles: new Set(), analyzed: new Set(), provisional: new Map(), redo: new Set() }
+        const run: Run = { cycles: new Set(), analyzed: new Set(), provisional: new Map(), redo: new Set(), latest: new Map(), settled: new Set() }
         this.run = run
         try {
-            const first = analyzeRoot()
-            if (!run.cycles.size) return first.result
+            let last = analyzeRoot()
+            if (!run.cycles.size) return last.result
 
-            for (const key of run.cycles) {
-                const exports = key === root ? first.exports() : this.modules.get(key)?.exports
-                if (exports && !exports.partial) run.provisional.set(key, exports)
+            const fingerprints = new Map<string, string | undefined>()
+            for (let pass = 1; pass < MAX_CYCLE_PASSES; pass++) {
+                let settled = pass > 1
+                for (const key of run.cycles) {
+                    const exports = key === root ? last.exports() : this.modules.get(key)?.exports
+                    if (exports && !exports.partial) run.provisional.set(key, exports)
+                    const fingerprint = exports && !exports.partial
+                        ? exportsFingerprint(exports, this.contextFor(key).libraryClasses)
+                        : undefined
+                    if (fingerprint === undefined || fingerprint !== fingerprints.get(key)) settled = false
+                    fingerprints.set(key, fingerprint)
+                }
+                if (settled) break
+                // Anything a pass analyzed may have read `any` through the
+                // cycle, so all of it is redone.
+                for (const key of run.analyzed) run.redo.add(key)
+                last = analyzeRoot()
             }
-            // Anything the first pass analyzed may have read `any` through the
-            // cycle, so all of it is redone.
-            for (const key of run.analyzed) run.redo.add(key)
-            const second = analyzeRoot().result
-            // What the second pass never came back to is still the first
-            // pass's, `any` and all.
+            // What the last pass never came back to is an earlier pass's,
+            // `any` and all.
             for (const key of run.redo) this.modules.delete(key)
-            return second
+            // The root is a module like the others now: an edit to it has
+            // something to compare its exports with.
+            const analysis = run.latest.get(root)
+            const exports = analysis && !speculative && !this.modules.has(root) ? last.exports() : undefined
+            if (analysis && exports) {
+                const fingerprint = exports.partial
+                    ? undefined
+                    : exportsFingerprint(exports, this.contextFor(pathOfUri(analysis.uri)).libraryClasses)
+                this.modules.set(root, { analysis, exports, fingerprint })
+            }
+            const members = this.settleCycles(run)
+            // What was analyzed against text that is not the file's — the
+            // copy completion patches — must not stand for the real thing.
+            if (speculative) for (const key of members) this.modules.delete(key)
+            return last.result
         } finally {
             this.run = undefined
         }
+    }
+
+    /** One file of the cycle `analysis` belongs to changed: redo that file
+     *  alone, which is all an edit that leaves its exports as they were needs
+     *  — typing in a function body, nearly always. Returns whether it did;
+     *  otherwise the cycle has to be analyzed again as a whole. */
+    private settleCycleEdit(analysis: Analysis): boolean {
+        const edited = new Map<string, string>()
+        for (const [file, text] of analysis.closure) {
+            if (this.readFile(file) !== text) edited.set(pathKey(file), file)
+        }
+        if (edited.size !== 1) return false
+        const [file] = edited.values()
+        const source = this.readFile(file)
+        if (source === undefined) return false
+        const open = this.openDocument?.(file)
+        const uri = open?.uri ?? uriOfPath(file)
+        const redone = this.redoInCycle(uri, open?.version ?? -1, source, file, analysis.closure, false)
+        if (!redone) return false
+        // Whatever this sweep found stale on account of that file no longer is.
+        this.freshThisSweep?.clear()
+        return true
+    }
+
+    /** Analyze the member at `path` against the cached exports of the rest of
+     *  its cycle, whose shared `closure` is passed in. A speculative copy stops
+     *  there. A real edit goes on to replace the member, provided its exports
+     *  came out the same — the others then read exactly what they did. */
+    private redoInCycle(
+        uri: string,
+        version: number,
+        source: string,
+        path: string,
+        closure: Map<string, string | undefined>,
+        speculative: boolean,
+    ): Analysis | undefined {
+        if (this.run) return undefined
+        const key = pathKey(path)
+        const settled = new Set<string>()
+        for (const [file, text] of closure) {
+            const other = pathKey(file)
+            if (other === key) continue
+            if (this.readFile(file) !== text) return undefined
+            settled.add(other)
+        }
+        const run: Run = { cycles: new Set(), analyzed: new Set(), provisional: new Map(), redo: new Set(), latest: new Map(), settled }
+        this.run = run
+        try {
+            const analysis = this.analyzeModule(uri, version, source, new Set([key]))
+            const exports = this.exportsFrom(analysis, new Set([key]))
+            // Something had no cached exports to read, and got as far as this
+            // module again: this is no shortcut.
+            if (run.cycles.size) {
+                for (const other of run.analyzed) this.modules.delete(other)
+                return undefined
+            }
+            if (speculative) return analysis
+
+            const module = this.modules.get(key)
+            const fingerprint = exports.partial
+                ? undefined
+                : exportsFingerprint(exports, this.contextFor(path).libraryClasses)
+            if (fingerprint === undefined || !module || fingerprint !== module.fingerprint) return undefined
+            for (const [file, text] of analysis.closure) if (!closure.has(file)) closure.set(file, text)
+            for (const file of closure.keys()) if (pathKey(file) === key) closure.set(file, source)
+            analysis.closure = closure
+            analysis.cyclic = true
+            this.modules.set(key, { analysis, exports: module.exports, fingerprint })
+            return analysis
+        } finally {
+            this.run = undefined
+        }
+    }
+
+    /** Give every member of the run's cycles the same closure, the union of
+     *  theirs: each of them saw the others part way through, so what one rests
+     *  on, all do. A module the cycle merely imports is not a member. Returns
+     *  the members. */
+    private settleCycles(run: Run): string[] {
+        const members = [...run.latest].filter(([key, analysis]) =>
+            run.cycles.has(key) || [...analysis.closure.keys()].some(file => run.cycles.has(pathKey(file))))
+        const closure = new Map<string, string | undefined>()
+        for (const [, analysis] of members) for (const [file, text] of analysis.closure) closure.set(file, text)
+        for (const [, analysis] of members) {
+            analysis.closure = closure
+            analysis.cyclic = true
+        }
+        return members.map(([key]) => key)
+    }
+
+    /** Record that `closure`'s analysis read the module at `target`, and so
+     *  rests on whatever that module does. */
+    private restOn(closure: Map<string, string | undefined>, target: string): void {
+        closure.set(target, this.readFile(target))
+        const module = this.modules.get(pathKey(target))
+        if (module) for (const [file, text] of module.analysis.closure) closure.set(file, text)
     }
 
     /** A module's exports, from its analysis. */
@@ -624,7 +771,10 @@ export class Analyzer {
         // Re-exports (`export ... from`) resolve relative to this module.
         return moduleExports(analysis.program, analysis.scopes, analysis.types, specifier => {
             const next = this.resolveModulePath(analysis.uri, specifier)
-            return next ? this.exportsOf(next, importing) : undefined
+            if (!next) return undefined
+            const exports = this.exportsOf(next, importing)
+            this.restOn(analysis.closure, next)
+            return exports
         })
     }
 
@@ -649,6 +799,7 @@ export class Analyzer {
         const scopes = analyzeScopes(program, { builtinGlobals: [...globals], reportUndeclared, noLib })
         const dependencies = new Map(context.reads)
         const imports = new Map<string, ModuleExports>()
+        const closure = new Map(context.reads)
         const types = analyzeTypes(program, scopes, {
             libs,
             noLib,
@@ -662,18 +813,24 @@ export class Analyzer {
                     // file later would leave this module's "Cannot find module"
                     // — and its unresolved types — cached until its own text
                     // changed.
-                    for (const candidate of candidates) dependencies.set(candidate, undefined)
+                    for (const candidate of candidates) {
+                        dependencies.set(candidate, undefined)
+                        closure.set(candidate, undefined)
+                    }
                     return undefined
                 }
                 const exports = this.exportsOf(target, importing)
                 if (exports) imports.set(target, exports)
+                this.restOn(closure, target)
                 return exports
             },
         })
-        return {
+        const analysis: Analysis = {
             uri, version, source, program, parseErrors: errors, directives, scopes, types,
-            dependencies, imports, project: context.project,
+            dependencies, imports, closure, cyclic: false, project: context.project,
         }
+        if (path) this.run?.latest.set(pathKey(path), analysis)
+        return analysis
     }
 
     private exportsOf(path: string, importing: Set<string>): ModuleExports | undefined {
@@ -685,7 +842,8 @@ export class Analyzer {
         const source = this.readFile(path)
         if (source === undefined) return undefined
         const cached = this.modules.get(key)
-        if (cached && !this.run?.redo.has(key) && cached.analysis.source === source && this.isFresh(cached.analysis)) {
+        if (cached && !this.run?.redo.has(key) && cached.analysis.source === source
+            && (this.run?.settled.has(key) || this.isFresh(cached.analysis))) {
             return cached.exports
         }
         importing.add(key)
@@ -699,6 +857,7 @@ export class Analyzer {
             // read the old ones read exactly this, so they stay as they are.
             if (fingerprint !== undefined && cached?.fingerprint === fingerprint) exports = cached.exports
             this.modules.set(key, { analysis, exports, fingerprint })
+            this.run?.latest.set(key, analysis)
             this.run?.redo.delete(key)
             this.run?.analyzed.add(key)
             return exports
@@ -729,6 +888,11 @@ export class Analyzer {
         const known = this.freshThisSweep?.get(analysis)
         if (known !== undefined) return known
         seen.add(analysis)
+        // Nothing it rests on has moved, which is nearly always: the end of it.
+        if (this.unchanged(analysis.closure)) return true
+        // Something moved. Elsewhere the module may still export what it did,
+        // but a cycle's exports are new objects each time: it can only be redone.
+        if (analysis.cyclic) return false
         for (const [path, source] of analysis.dependencies) {
             if (this.readFile(path) !== source) return false
         }
@@ -750,7 +914,9 @@ export class Analyzer {
         if (module && module.analysis.source === this.readFile(path) && this.isFreshWalk(module.analysis, seen)) {
             return module.exports
         }
-        return this.run ? undefined : this.exportsAt(path)
+        if (this.run) return undefined
+        if (module?.analysis.cyclic && this.settleCycleEdit(module.analysis)) return this.modules.get(key)?.exports
+        return this.exportsAt(path)
     }
 }
 

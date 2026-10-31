@@ -993,8 +993,8 @@ print(later)
 }
 
 // --- import cycles -----------------------------------------------------
-// A cycle is broken by letting one side see the other unfinished; a second
-// pass then fills in what that left as `any`.
+// A cycle is broken by letting one side see the other unfinished; further
+// passes then fill in what that left as `any`.
 {
     const { mkdtempSync, writeFileSync, mkdirSync, rmSync } = await import("node:fs")
     const { tmpdir } = await import("node:os")
@@ -1014,6 +1014,25 @@ print(later)
         // from the near side.
         "back/a.tilua": `import { useA, AliasOfA, takesA } from "./b"\nexport function fromA(): number {\n    return 1\n}\nexport type A = { name: string }\nconst viaValue: string = useA\nconst viaAlias: AliasOfA = { name: 1 }\nconst viaFunction: string = takesA({ name: "x" })\nprint(viaValue, viaAlias, viaFunction)\n`,
         "back/b.tilua": `import { fromA, A } from "./a"\nexport const useA = fromA()\nexport type AliasOfA = A\nexport function takesA(a: A): number {\n    return 1\n}\n`,
+        // `seed` goes round to `echo`, and `echo` round again to `viaB`: back through
+        // the import of a twice, so one pass after the first is not enough.
+        "chain/a.tilua": `import { fromC, viaB } from "./c"
+export const seed = 1
+export const echo = fromC
+const wrong: string = viaB
+print(wrong)
+`,
+        "chain/b.tilua": `import { seed, echo } from "./a"
+export const back = seed
+export const fromB = echo
+`,
+        "chain/c.tilua": `import { back, fromB } from "./b"
+export const fromC = back
+export const viaB = fromB
+`,
+        "chain/main.tilua": `import { fromC } from "./c"
+print(fromC)
+`,
         // A cycle the opened file is not part of: b <-> c.
         "deep/main.tilua": `import { doubled } from "./b"\nconst wrong: string = doubled\nprint(wrong)\n`,
         "deep/b.tilua": `import { derived } from "./c"\nexport const base = 1\nexport const doubled = derived\n`,
@@ -1047,6 +1066,13 @@ print(later)
             "Type '{ name: number }' is not assignable to '{ name: string }', 'name' is number, not string",
             "Type 'number' is not assignable to 'string'",
         ])
+    // A type that has to cross the cycle's imports more than once to arrive.
+    for (const first of ["chain/a.tilua", "chain/b.tilua", "chain/c.tilua", "chain/main.tilua"]) {
+        const cycles = fresh()
+        messagesOf(cycles, first)
+        check(`cycles: what a long cycle infers does not depend on opening ${first} first`,
+            messagesOf(cycles, "chain/a.tilua"), ["Type '1' is not assignable to 'string'"])
+    }
     check("cycles: a cycle the opened file is not part of", messagesOf(fresh(), "deep/main.tilua"),
         ["Type '1' is not assignable to 'string'"])
 
@@ -1124,6 +1150,30 @@ print(later)
     check("edits: a cycle settles after an edit",
         edits.get(doc("cycle/a.tilua")) === settledA && edits.get(doc("cycle/b.tilua")) === settledB, true)
     check("edits: and is still checked", messages("cycle/a.tilua"), [])
+
+    // Nothing changed: a cycle is not redone just because it is asked about,
+    // and an edit that keeps a member's exports leaves the other member alone.
+    type("cycle/a.tilua", "return 2", "return 3")
+    edits.sweep(() => edits.get(doc("cycle/b.tilua")))
+    check("edits: a body edit in a cycle keeps the other member's analysis",
+        edits.get(doc("cycle/b.tilua")) === settledB, true)
+    check("edits: and redoes the member that was edited",
+        edits.get(doc("cycle/a.tilua")).source, doc("cycle/a.tilua").getText())
+
+    // A copy completion patched reads the cycle without leaving a mark on it.
+    const patched = doc("cycle/a.tilua").getText().replace("fromA(): number", "fromA(): string")
+    edits.sweep(() => edits.analyze(doc("cycle/a.tilua").uri, -1, patched))
+    check("edits: a speculative copy leaves a cycle as it was", messages("cycle/b.tilua"), [])
+
+    type("cycle/a.tilua", "fromA(): number", "fromA(): string")
+    type("cycle/a.tilua", "return 3", "return \"x\"")
+    sweep()
+    check("edits: an edit that changes a cycle's exports reaches the other member",
+        messages("cycle/b.tilua"), ["Type 'string' is not assignable to 'number'"])
+    type("cycle/a.tilua", "fromA(): string", "fromA(): number")
+    type("cycle/a.tilua", "return \"x\"", "return 4")
+    sweep()
+    check("edits: and so does changing it back", messages("cycle/b.tilua"), [])
 
     rmSync(root, { recursive: true, force: true })
 }
