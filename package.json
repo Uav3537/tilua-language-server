@@ -1,6 +1,6 @@
 {
   "name": "@tilua/language-server",
-  "version": "9.0.2",
+  "version": "9.1.0",
   "description": "Language server for tilua (LSP), built on @tilua/parser",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -34,14 +34,14 @@
   "license": "ISC",
   "type": "module",
   "devDependencies": {
-    "@tilua-types/roblox": "^10.0.2",
+    "@tilua-types/roblox": "^10.1.0",
     "@types/node": "^22.20.2",
     "tsup": "^8.5.1",
     "tsx": "^4.23.13",
     "typescript": "^5.0.4"
   },
   "dependencies": {
-    "@tilua/parser": "^9.0.2",
+    "@tilua/parser": "^9.1.0",
     "vscode-languageserver": "^10.1.1",
     "vscode-languageserver-textdocument": "^1.0.14"
   },

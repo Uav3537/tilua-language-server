@@ -13,7 +13,7 @@ import {
 } from "vscode-languageserver"
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import {
-    formatType, isClassType, isUnassignedGlobal, parseWithRecovery, numberType,
+    formatType, isClassType, isUnassignedGlobal, parseWithRecovery, numberType, union,
     type Expression, type ObjectPattern, type ObjectPatternProperty, type Program, type Type, type TypeNode,
 } from "@tilua/parser"
 import type { Analysis, Analyzer } from "../analysis.js"
@@ -21,7 +21,7 @@ import { pathAt, type Spanned } from "../ast-utils.js"
 import { importItems, serviceItems } from "./autoImport.js"
 import { importCompletion } from "./imports.js"
 import { callSignaturesAt } from "./signatureHelp.js"
-import { membersOf, metatableMembersOf, signaturesOf, signatureLabel } from "./members.js"
+import { membersOf, metatableMembersOf, signaturesOf, signatureLabel, type Member } from "./members.js"
 
 const PLACEHOLDER = "__tiluaCompletion__"
 const IDENTIFIER_CHAR = /[A-Za-z0-9_]/
@@ -300,6 +300,14 @@ function stringAt(program: Program, position: Position): Spanned | undefined {
     return [...path].reverse().find(n => n.type === "StringLiteral" || n.type === "TypeLiteralString")
 }
 
+/** A field of an object literal, as far as a key is concerned. */
+interface KeyField {
+    type: string
+    key?: { name?: string; value?: string }
+    name?: { name: string }
+    value?: { type: string; value?: unknown }
+}
+
 /** Inside `{ | }` written against a type — an annotation, `satisfies`, an
  *  argument — the keys that type names, minus the ones already written. */
 function objectKeyItems(
@@ -312,7 +320,7 @@ function objectKeyItems(
     )
     const literal = index > 0 ? (path[index - 1] as unknown as Record<string, unknown>) : undefined
     if (literal?.type !== "TableExpression") return undefined
-    const fields = literal.fields as { type: string; key?: { name?: string; value?: string }; name?: { name: string } }[]
+    const fields = literal.fields as KeyField[]
     // Only where a key is being written: `{ width: | }` is a value.
     const atKey = fields.some(f => f.type === "TableFieldShorthand" && f.name?.name === PLACEHOLDER)
     if (!atKey) return undefined
@@ -324,8 +332,9 @@ function objectKeyItems(
         if (outer.type !== "AsConstExpression" && outer.type !== "ParenthesizedExpression") break
         expected = analysis.types.expectedTypeOf.get(outer as unknown as Expression)
     }
-    const members = membersOf(expected, analysis.types.aliases)
-    if (!members.length) return undefined
+    const aliases = analysis.types.aliases
+    const members = keyMembers(expected, aliases, fields)
+    if (!members.length) return allowsNoKeys(expected, aliases) ? [] : undefined
 
     const written = new Set<string>()
     for (const field of fields) {
@@ -342,6 +351,47 @@ function objectKeyItems(
             detail: `${member.property.optional ? "?" : ""}: ${formatType(member.property.type)}`,
             insertText: colon ? member.name : `${member.name}: `,
         }))
+}
+
+/** The keys a literal may still name against `type`. Unlike reading a member,
+ *  which only what every arm of a union has allows, a literal is writing one of
+ *  the arms: each arm's keys count, `nil` says nothing, and an arm a literal
+ *  already written rules out (`K: "a"` against `K: "b"`) is left out. */
+function keyMembers(type: Type | undefined, aliases: ReadonlyMap<string, Type>, fields: readonly KeyField[]): Member[] {
+    const resolved = type?.kind === "genericRef" ? aliases.get(type.name) ?? type : type
+    if (resolved?.kind !== "union") return membersOf(resolved, aliases)
+    const arms = resolved.types
+        .map(arm => (arm.kind === "genericRef" ? aliases.get(arm.name) ?? arm : arm))
+        .filter(arm => !(arm.kind === "primitive" && arm.name === "nil"))
+    const open = arms.filter(arm => !contradicted(arm, fields))
+    const byName = new Map<string, Member>()
+    for (const arm of open.length ? open : arms) {
+        for (const member of membersOf(arm, aliases)) {
+            const known = byName.get(member.name)
+            const property = known ? { ...known.property, type: union([known.property.type, member.property.type]) } : member.property
+            byName.set(member.name, { ...member, property })
+        }
+    }
+    return [...byName.values()]
+}
+
+/** Has a field already written a literal `arm` does not take at that key? */
+function contradicted(arm: Type, fields: readonly KeyField[]): boolean {
+    if (arm.kind !== "object") return false
+    return fields.some(field => {
+        const value = field.type === "TableFieldNamed" ? field.value : undefined
+        if (value?.type !== "StringLiteral" && value?.type !== "NumberLiteral" && value?.type !== "BooleanLiteral") return false
+        const wanted = arm.properties.get(field.key?.name ?? field.key?.value ?? "")?.type
+        const options = wanted?.kind === "union" ? wanted.types : wanted ? [wanted] : []
+        return options.length > 0 && options.every(o => o.kind === "literal" && o.value !== value.value)
+    })
+}
+
+/** A contract of `{}`: any key written would be an excess property, so there
+ *  is nothing to offer — least of all the globals, which are shorthand keys. */
+function allowsNoKeys(type: Type | undefined, aliases: ReadonlyMap<string, Type>): boolean {
+    const resolved = type?.kind === "genericRef" ? aliases.get(type.name) : type
+    return resolved?.kind === "object" && !resolved.class && !resolved.indexer && resolved.properties.size === 0
 }
 
 /** `const { | } = v`: the members of what the pattern reads, but those it

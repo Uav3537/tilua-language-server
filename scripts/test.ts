@@ -520,6 +520,19 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
     // suggestions there.
     check("completion: `[string]` spells out no keys",
         labelsAt(`const m = {\n    ‸\n} satisfies { [string]: number }\n`).includes("print"), true)
+    // Nothing fits `{}`, and a global would be a shorthand key it rejects.
+    check("completion: a contract with no keys offers nothing", [
+        labelsAt(`type Empty = {\n}\nconst m = {\n    ‸\n} satisfies Empty\n`),
+        labelsAt(`const m = {\n    ‸\n} as const satisfies {}\n`),
+        labelsAt(`const m: {} = {\n    pr‸\n}\n`),
+    ], [[], [], []])
+    // A literal is writing one arm of a union, so every arm's keys count.
+    const arms = "type C = { U: { K: \"a\", P: number } | { K: \"b\", Q: number }, N: { X: number } | nil }\n"
+    check("completion: a union's arms, narrowed by what is written, and `nil` ignored", [
+        labelsAt(arms + "const c = {\n    U: { ‸ }\n} satisfies C\n").sort(),
+        labelsAt(arms + "const c = {\n    U: { K: \"a\", ‸ }\n} as const satisfies C\n"),
+        labelsAt(arms + "const c = {\n    N: { ‸ }\n} satisfies C\n"),
+    ], [["K", "P", "Q"], ["P"], ["X"]])
 }
 
 // --- a ternary's parts, and each line of an overload set -----------------
@@ -1205,7 +1218,7 @@ print(later)
         pathToFileURL(join(dirname(root), `tilua-no-config-${Date.now()}`, "x.tilua")).href, "tilua", 1, "print(1)\n"))
     check("projects: a file no config covers has the language and its standard library, and nothing more",
         [loose.project.config, [...loose.types.aliases.keys()].sort().join(" ")],
-        [undefined, "Console ConstructorParameters EntriesObject Extract Falsy FromEntries InstanceType Iteration ListEntries ListKeys ListValues MappedList Mutable NonNullable Omit Parameters Partial PcallResult Pick Readonly Record Required ReturnType Truthy"])
+        [undefined, "Console ConstructorParameters EntriesObject Extract Falsy FromEntries InstanceType Iteration ListEntries ListKeys ListValues MappedList Metatable Mutable NonNullable Omit Parameters Partial PcallResult Pick Readonly Record Required ReturnType Truthy WithMetatable"])
 
     check("projects: two configs in one folder are reported on both",
         projects.get(openFile("dup/x.tilua", "")).project.problems.length, 2)
