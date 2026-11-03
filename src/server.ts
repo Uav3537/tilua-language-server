@@ -239,9 +239,26 @@ export function createServer(connection: Connection, options: ServerOptions = {}
         p.textDocument.uri, d => rename(analyzer.get(d), p.position, p.newName), null,
     ))
 
-    connection.onCompletion(p => withDocument(
-        p.textDocument.uri, d => completion(analyzer, d, p.position), [],
-    ))
+    // Modules completion had no time to analyze are done between requests,
+    // one per turn so a request never waits behind more than one.
+    let warming = false
+    const warmSoon = (): void => {
+        if (warming || !analyzer.warmPending) return
+        warming = true
+        setTimeout(() => {
+            warming = false
+            if (analyzer.warmNext()) warmSoon()
+        }, 0)
+    }
+
+    connection.onCompletion(p => {
+        const items = withDocument(p.textDocument.uri, d => completion(analyzer, d, p.position), [])
+        const incomplete = analyzer.warmPending
+        warmSoon()
+        // Incomplete: asked again on the next keystroke, by when the
+        // skipped modules' names are in.
+        return incomplete ? { isIncomplete: true, items } : items
+    })
 
     connection.onSignatureHelp(p => withDocument(
         p.textDocument.uri, d => signatureHelp(analyzer, d, p.position), null,

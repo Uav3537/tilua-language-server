@@ -76,6 +76,9 @@ export interface AnalyzerOptions {
     libs?: readonly Program[]
     /** The open document for a file path, if there is one. */
     openDocument?: (path: string) => TextDocument | undefined
+    /** Leave unanalyzed modules out of completion's import suggestions until
+     *  `warmNext` has analyzed them, instead of analyzing them mid-request. */
+    deferListing?: boolean
 }
 
 /** How a listing of a folder's files is keyed, apart from its folders'. */
@@ -239,6 +242,7 @@ const NO_PROJECT: Context = {
 export class Analyzer {
     private readonly fixed?: Context
     private readonly openDocument?: (path: string) => TextDocument | undefined
+    private readonly deferListing: boolean
     private readonly cache = new Map<string, Analysis>()
     /** Imported modules, by path key. */
     private readonly modules = new Map<string, Module>()
@@ -253,6 +257,7 @@ export class Analyzer {
 
     constructor(options: AnalyzerOptions = {}) {
         this.openDocument = options.openDocument
+        this.deferListing = options.deferListing ?? false
         if (options.libs) {
             this.fixed = {
                 project: { fixed: true, problems: [] },
@@ -300,12 +305,14 @@ export class Analyzer {
     }
 
     /** Analyze source text that is not a tracked document — used by
-     *  completion, which analyzes a speculatively edited copy of the file. */
-    analyze(uri: string, version: number, source: string): Analysis {
+     *  completion, which analyzes a speculatively edited copy of the file.
+     *  `copy` says the text is a copy even when it is what the file holds:
+     *  the rest of a cycle is then read as it stands, not settled again. */
+    analyze(uri: string, version: number, source: string, copy = false): Analysis {
         const path = pathOfUri(uri)
         if (!path) return this.analyzeModule(uri, version, source, new Set())
         const key = pathKey(path)
-        const speculative = this.readFile(path) !== source
+        const speculative = copy || this.readFile(path) !== source
         if (speculative) {
             // A patched copy of a cycle's member reads the rest as they stand.
             const known = this.cache.get(uri) ?? this.modules.get(key)?.analysis
@@ -313,7 +320,7 @@ export class Analyzer {
             if (copy) return copy
         }
         return this.resolvingCycles(key, () => {
-            const analysis = this.analyzeModule(uri, version, source, new Set([key]))
+            const analysis = this.analyzeModule(uri, version, source, new Set([key]), speculative)
             return { result: analysis, exports: () => this.exportsFrom(analysis, new Set([key])) }
         }, speculative)
     }
@@ -343,18 +350,41 @@ export class Analyzer {
         })
     }
 
-    /** What the module at `path` exports, to list the names it offers: the
-     *  last analysis for as long as the file's own text is the same, even when
-     *  something it imports has changed since.
+    /** Modules completion wanted the exports of and had no time to analyze. */
+    private readonly warming = new Set<string>()
+
+    /** Whether `warmNext` has anything left to do. */
+    get warmPending(): boolean {
+        return this.warming.size > 0
+    }
+
+    /** What the module at `path` exports, to list the names it offers: what
+     *  was last analyzed, however old — a name a keystroke behind is still the
+     *  right name to offer.
      *
-     *  Completion lists every module's exports on every keystroke, and the
-     *  file being typed in is imported by some of them — checking them in
-     *  full would re-analyze each of those, each time, to list names the edit
-     *  cannot have changed. The sweep that follows the typing catches them up. */
+     *  Completion lists every module's exports on every keystroke, and a
+     *  module nobody has analyzed yet, or one a cycle's speculative pass threw
+     *  away, costs a whole analysis — seconds in a project that imports a
+     *  lot, during which an editor's server answers nothing at all. With
+     *  `deferListing` such a module is left for `warmNext` to do between
+     *  requests, and `warmPending` says the list is missing some. */
     listedExportsAt(path: string): ModuleExports | undefined {
         const cached = this.modules.get(pathKey(path))
-        if (cached && cached.analysis.source === this.readFile(path)) return cached.exports
+        if (cached) return cached.exports
+        if (this.deferListing) {
+            this.warming.add(path)
+            return undefined
+        }
         return this.exportsAt(path)
+    }
+
+    /** Analyze one module completion skipped. Returns whether more wait. */
+    warmNext(): boolean {
+        const [path] = this.warming
+        if (path === undefined) return false
+        this.warming.delete(path)
+        if (!this.modules.has(pathKey(path))) this.sweep(() => this.exportsAt(path))
+        return this.warming.size > 0
     }
 
     /** The analysis of the module at `path`, analyzing it if need be. */
@@ -705,7 +735,7 @@ export class Analyzer {
         const run: Run = { cycles: new Set(), analyzed: new Set(), provisional: new Map(), redo: new Set(), latest: new Map(), settled }
         this.run = run
         try {
-            const analysis = this.analyzeModule(uri, version, source, new Set([key]))
+            const analysis = this.analyzeModule(uri, version, source, new Set([key]), speculative)
             const exports = this.exportsFrom(analysis, new Set([key]))
             // Something had no cached exports to read, and got as far as this
             // module again: this is no shortcut.
@@ -769,8 +799,9 @@ export class Analyzer {
 
     /** `importing` holds every module on the current import chain, so an
      *  import back into one of them is recognized as a cycle. */
-    private analyzeModule(uri: string, version: number, source: string, importing: Set<string>): Analysis {
-        const path = pathOfUri(uri)
+    /** What analyzing a file of `path` starts from: its project, the
+     *  definitions and global names it sees, and how undeclared names count. */
+    private setupFor(path: string | undefined) {
         const context = this.contextFor(path)
         // A file the sourcemap maps has its own `script`. The sourcemap lists
         // what Rojo syncs: the file this one compiles to.
@@ -778,13 +809,41 @@ export class Analyzer {
         const script = path ? context.sourceMap?.scriptFor(config ? outputPathOf(config, path) : path) : undefined
         const libs = script ? [...context.libs, script] : context.libs
         const globals = script ? [...context.globals, "script"] : context.globals
-
-        const { program, errors, directives } = parseWithRecovery(source)
         // Lua's standard library is always there, so a name nothing declares
         // is an error — unless the project left it out (`noLib`) and named no
         // library either: then `print` itself is undeclared.
-        const noLib = context.project.config?.noLib ?? false
+        const noLib = config?.noLib ?? false
         const reportUndeclared = context.libs.length > 0 || !noLib
+        return { context, libs, globals, noLib, reportUndeclared }
+    }
+
+    /** The scopes of `source` alone, without its types: names in scope are
+     *  all a plain word being completed needs, and they cost a fraction of
+     *  the types. `undefined` when the file was never analyzed, which has
+     *  nothing to stand in for the types. */
+    scopesOnly(uri: string, source: string): { analysis: Analysis; known: ReadonlyMap<string, Type> } | undefined {
+        const last = this.cache.get(uri)
+        if (!last) return undefined
+        const { globals, noLib, reportUndeclared } = this.setupFor(pathOfUri(uri))
+        const { program, errors, directives } = parseWithRecovery(source)
+        const scopes = analyzeScopes(program, { builtinGlobals: [...globals], reportUndeclared, noLib })
+        // The types of the last full analysis, by name: a keystroke behind,
+        // which is right for every name the keystroke did not declare.
+        const known = new Map<string, Type>()
+        for (const binding of last.scopes.bindings.values()) {
+            const type = last.types.bindingType.get(binding.id)
+            if (type) known.set(binding.name, type)
+        }
+        return { analysis: { ...last, uri, version: -1, source, program, parseErrors: errors, directives, scopes }, known }
+    }
+
+    /** `quiet`: nobody will read this analysis's diagnostics (a completion's
+     *  speculative copy), so the checks that only produce them are skipped. */
+    private analyzeModule(uri: string, version: number, source: string, importing: Set<string>, quiet = false): Analysis {
+        const path = pathOfUri(uri)
+        const { context, libs, globals, noLib, reportUndeclared } = this.setupFor(path)
+
+        const { program, errors, directives } = parseWithRecovery(source)
         const scopes = analyzeScopes(program, { builtinGlobals: [...globals], reportUndeclared, noLib })
         const dependencies = new Map(context.reads)
         const imports = new Map<string, ModuleExports>()
@@ -792,6 +851,7 @@ export class Analyzer {
         const types = analyzeTypes(program, scopes, {
             libs,
             noLib,
+            diagnostics: !quiet,
             reportUnknownTypes: reportUndeclared,
             resolveModule: specifier => {
                 if (!path) return undefined

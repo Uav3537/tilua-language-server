@@ -14,7 +14,7 @@ import {
 import type { TextDocument } from "vscode-languageserver-textdocument"
 import {
     formatType, isClassType, isUnassignedGlobal, parseWithRecovery, numberType, union,
-    type Expression, type ObjectPattern, type ObjectPatternProperty, type Program, type Type, type TypeNode,
+    type Binding, type Expression, type ObjectPattern, type ObjectPatternProperty, type Program, type Type, type TypeNode,
 } from "@tilua/parser"
 import type { Analysis, Analyzer } from "../analysis.js"
 import { pathAt, type Spanned } from "../ast-utils.js"
@@ -95,6 +95,18 @@ export function completion(
     const members = classMemberItems(source, start, end, at)
     if (members) return members
 
+    // A plain word wants the names in scope and little else, which the scopes
+    // alone say — a fraction of what the types cost, and most completions are
+    // exactly this. Anything that reads types (a type position, the keys of
+    // a table or a pattern) takes the full analysis below.
+    const cheap = analyzer.scopesOnly(document.uri, firstPatched)
+    if (cheap) {
+        const path = pathAt(cheap.analysis.program, at, true)
+        if (!needsTypes(path)) {
+            return nameItems(analyzer, cheap.analysis, path, at, source, start, binding => cheap.known.get(binding.name))
+        }
+    }
+
     const analysis = analyzer.analyze(document.uri, -1, firstPatched)
     const first = { analysis, path: pathAt(analysis.program, at, true) }
 
@@ -139,19 +151,48 @@ export function completion(
     // global binding too, and the half-typed word under the cursor is exactly
     // that — counting it as taken is how a name stopped offering the import
     // that would have defined it.
+    return nameItems(
+        analyzer, first.analysis, first.path, at, source, start,
+        binding => first.analysis.types.bindingType.get(binding.id),
+    )
+}
+
+/** Whether what is being completed reads types: a position in a type, or the
+ *  key of a table or a destructuring pattern, where the type expected says
+ *  which keys. */
+function needsTypes(path: readonly Spanned[]): boolean {
+    const index = path.findLastIndex(
+        n => n.type === "Identifier" && (n as unknown as { name: string }).name === PLACEHOLDER,
+    )
+    if (index < 0 || inTypePosition(path)) return true
+    return path.slice(Math.max(0, index - 3), index).some(
+        n => n.type === "TableExpression" || n.type === "ObjectPattern" || n.type === "ObjectPatternProperty",
+    )
+}
+
+/** The names a word can be completed to. `typeOf` says what each binding
+ *  holds, for its icon and detail. */
+function nameItems(
+    analyzer: Analyzer,
+    analysis: Analysis,
+    path: readonly Spanned[],
+    at: Position,
+    source: string,
+    start: number,
+    typeOf: (binding: Binding) => Type | undefined,
+): CompletionItem[] {
     const taken = new Set<string>()
-    for (const binding of first.analysis.scopes.bindings.values()) {
+    for (const binding of analysis.scopes.bindings.values()) {
         if (!isUnassignedGlobal(binding)) taken.add(binding.name)
     }
     // The speculative copy is the document with one word swapped, which is
     // all these read — analyzing the document itself as well would double
     // what a keystroke costs.
-    const current = first.analysis
     return [
-        ...valueItems(first.analysis, at, insideFunction(first.path)),
+        ...valueItems(analysis, at, insideFunction(path), typeOf),
         ...contextKeywords(source.slice(0, start)),
-        ...importItems(analyzer, current, false, taken),
-        ...serviceItems(current, taken),
+        ...importItems(analyzer, analysis, false, taken),
+        ...serviceItems(analysis, taken),
     ]
 }
 
@@ -253,7 +294,9 @@ function stringCompletion(
         text = repaired.find(candidate => stringAt(parseWithRecovery(candidate).program, position))
         if (text === undefined) return repaired.length ? [] : undefined
     }
-    const analysis = text === document.getText() ? analyzer.get(document) : analyzer.analyze(document.uri, -1, text)
+    // A copy, not the document: settling the document's own analysis means
+    // settling the cycle it is in, which a string being typed has no use for.
+    const analysis = analyzer.analyze(document.uri, -1, text, true)
     const literal = stringAt(analysis.program, position)
     if (!literal) return []
 
@@ -582,7 +625,12 @@ function insideFunction(path: readonly Spanned[]): boolean {
  *  inside a function body — plus the globals, which are visible everywhere.
  *  Over-offering is the right failure: a name the editor lists and the file
  *  rejects is a diagnostic away from being obvious. */
-function valueItems(analysis: Analysis, at: Position, inFunction: boolean): CompletionItem[] {
+function valueItems(
+    analysis: Analysis,
+    at: Position,
+    inFunction: boolean,
+    typeOf: (binding: Binding) => Type | undefined,
+): CompletionItem[] {
     const items: CompletionItem[] = []
     const seen = new Set<string>()
     for (const binding of analysis.scopes.bindings.values()) {
@@ -595,7 +643,7 @@ function valueItems(analysis: Analysis, at: Position, inFunction: boolean): Comp
         // a module declares is visible to code that runs later.
         if (later && !inFunction && binding.declaredBy !== "function") continue
         seen.add(binding.name)
-        const type = analysis.types.bindingType.get(binding.id)
+        const type = typeOf(binding)
         items.push({
             label: binding.name,
             kind: kindOf(type, binding.kind),

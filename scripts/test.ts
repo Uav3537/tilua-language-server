@@ -697,6 +697,26 @@ function contains(name: string, haystack: readonly string[], needle: string): vo
 
 // --- services and directives ---------------------------------------------
 {
+    // A document already analyzed, then typed in: a plain word is answered from
+    // the scopes alone, with the types of the analysis before the keystroke.
+    {
+        const before = open(`const total = 1 + 2
+function area(w: number): number { return w * 2 }
+print(total)
+`)
+        analyzer.get(before.document)
+        const typed = TextDocument.create(before.document.uri, "tilua", 2,
+            `const total = 1 + 2
+function area(w: number): number { return w * 2 }
+const fresh = 3
+print(to)
+`)
+        const items = completion(analyzer, typed, { line: 3, character: 8 })
+        const item = (label: string) => items.find(i => i.label === label && !i.additionalTextEdits)
+        check("completion from scopes: a name declared before the keystroke keeps its type",
+            [item("total")?.detail, item("area")?.detail], ["number", "(w: number) => number"])
+        contains("completion from scopes: a name the keystroke declared is offered", items.map(i => i.label), "fresh")
+    }
     const serviceEdit = (src: string, label: string) => {
         const { document, cursor } = open(src)
         const item = completion(analyzer, document, cursor).find(i => i.label === label && i.additionalTextEdits)
