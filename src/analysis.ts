@@ -651,19 +651,30 @@ export class Analyzer {
             const fingerprints = new Map<string, string | undefined>()
             for (let pass = 1; pass < MAX_CYCLE_PASSES; pass++) {
                 let settled = pass > 1
+                // The cycle points whose exports this pass changed.
+                const changed = new Set<string>()
                 for (const key of run.cycles) {
                     const exports = key === root ? last.exports() : this.modules.get(key)?.exports
                     if (exports && !exports.partial) run.provisional.set(key, exports)
                     const fingerprint = exports && !exports.partial
                         ? exportsFingerprint(exports, this.contextFor(key).libraryClasses)
                         : undefined
-                    if (fingerprint === undefined || fingerprint !== fingerprints.get(key)) settled = false
+                    if (fingerprint === undefined || fingerprint !== fingerprints.get(key)) {
+                        settled = false
+                        changed.add(key)
+                    }
                     fingerprints.set(key, fingerprint)
                 }
                 if (settled) break
-                // Anything a pass analyzed may have read `any` through the
-                // cycle, so all of it is redone.
-                for (const key of run.analyzed) run.redo.add(key)
+                // What read a cycle point whose exports changed read `any`, or
+                // what they were a pass ago, and is redone. A module whose
+                // closure reaches none of them read exactly what the next pass
+                // would give it: in a project of a few dozen modules, a pass
+                // over all of them is most of what a cycle costs.
+                for (const key of run.analyzed) {
+                    const analysis = run.latest.get(key)
+                    if (!analysis || [...analysis.closure.keys()].some(file => changed.has(pathKey(file)))) run.redo.add(key)
+                }
                 last = analyzeRoot()
             }
             // What the last pass never came back to is an earlier pass's,
@@ -699,6 +710,13 @@ export class Analyzer {
             if (this.readFile(file) !== text) edited.set(pathKey(file), file)
         }
         if (edited.size !== 1) return false
+        // The members of one analysis of a cycle share one closure, and a new
+        // analysis of the whole cycle gives them a new one. Should this
+        // analysis be from an older one than its module is, it read exports
+        // the cycle no longer has: comparing the edited member's exports with
+        // the cached ones says nothing about what *this* analysis read.
+        const own = pathOfUri(analysis.uri)
+        if (own && this.modules.get(pathKey(own))?.analysis.closure !== analysis.closure) return false
         const [file] = edited.values()
         const source = this.readFile(file)
         if (source === undefined) return false
@@ -749,7 +767,11 @@ export class Analyzer {
             const fingerprint = exports.partial
                 ? undefined
                 : exportsFingerprint(exports, this.contextFor(path).libraryClasses)
-            if (fingerprint === undefined || !module || fingerprint !== module.fingerprint) return undefined
+            // The cached member must be from the same analysis of the cycle as
+            // the closure (see `settleCycleEdit`), or its exports are not the
+            // ones the rest of it read.
+            if (fingerprint === undefined || !module || module.analysis.closure !== closure
+                || fingerprint !== module.fingerprint) return undefined
             for (const [file, text] of analysis.closure) if (!closure.has(file)) closure.set(file, text)
             for (const file of closure.keys()) if (pathKey(file) === key) closure.set(file, source)
             analysis.closure = closure
@@ -778,10 +800,20 @@ export class Analyzer {
     }
 
     /** Record that `closure`'s analysis read the module at `target`, and so
-     *  rests on whatever that module does. */
-    private restOn(closure: Map<string, string | undefined>, target: string): void {
+     *  rests on whatever that module does.
+     *
+     *  A `target` still on the import chain (`importing`) was met through a
+     *  cycle: what was read from it is `any` or the last pass's exports, not
+     *  its cached module. That entry may be from before an edit, and its
+     *  closure then holds the old text of a file — copied here, it would make
+     *  this analysis look out of date for good, and every module importing it
+     *  would analyze it again, and again. The cycle's members get each other's
+     *  closures once the run is done (`settleCycles`). */
+    private restOn(closure: Map<string, string | undefined>, target: string, importing?: ReadonlySet<string>): void {
         closure.set(target, this.readFile(target))
-        const module = this.modules.get(pathKey(target))
+        const key = pathKey(target)
+        if (importing?.has(key)) return
+        const module = this.modules.get(key)
         if (module) for (const [file, text] of module.analysis.closure) closure.set(file, text)
     }
 
@@ -792,7 +824,7 @@ export class Analyzer {
             const next = this.resolveModulePath(analysis.uri, specifier)
             if (!next) return undefined
             const exports = this.exportsOf(next, importing)
-            this.restOn(analysis.closure, next)
+            this.restOn(analysis.closure, next, importing)
             return exports
         })
     }
@@ -870,7 +902,7 @@ export class Analyzer {
                 }
                 const exports = this.exportsOf(target, importing)
                 if (exports) imports.set(target, exports)
-                this.restOn(closure, target)
+                this.restOn(closure, target, importing)
                 return exports
             },
         })

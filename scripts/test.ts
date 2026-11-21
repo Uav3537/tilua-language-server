@@ -7,7 +7,7 @@
  * the LSP wiring in `server.ts` and nothing else.
  */
 import { TextDocument } from "vscode-languageserver-textdocument"
-import { Analyzer } from "../src/analysis.js"
+import { Analyzer, type Analysis } from "../src/analysis.js"
 import { diagnostics } from "../src/features/diagnostics.js"
 import { hover } from "../src/features/hover.js"
 import { definition, references, rename } from "../src/features/navigation.js"
@@ -1190,10 +1190,55 @@ print(fromC)
     sweep()
     check("edits: an edit that changes a cycle's exports reaches the other member",
         messages("cycle/b.tilua"), ["Type 'string' is not assignable to 'number'"])
+    // And it settles too. A member that read the other through the cycle once
+    // took that one's closure from before the edit, so it never looked fresh
+    // again: every sweep, and every module importing it, analyzed it anew.
+    const changedA = edits.get(doc("cycle/a.tilua"))
+    const changedB = edits.get(doc("cycle/b.tilua"))
+    sweep()
+    check("edits: a cycle whose exports changed settles",
+        edits.get(doc("cycle/a.tilua")) === changedA && edits.get(doc("cycle/b.tilua")) === changedB, true)
     type("cycle/a.tilua", "fromA(): string", "fromA(): number")
     type("cycle/a.tilua", "return \"x\"", "return 4")
     sweep()
     check("edits: and so does changing it back", messages("cycle/b.tilua"), [])
+
+    rmSync(root, { recursive: true, force: true })
+}
+
+// --- an edit to the far end of a long cycle ----------------------------
+// `r` imports a chain whose bottom, `s`, imports `r` back, and `s` is read
+// by two of the chain. After an edit that changes `r`'s exports, what was
+// analyzed must be reused on the next request — a real project's 25-module
+// cycle once took a minute a request, every request, after one such edit.
+{
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs")
+    const { tmpdir } = await import("node:os")
+    const { join } = await import("node:path")
+    const { pathToFileURL } = await import("node:url")
+
+    const root = mkdtempSync(join(tmpdir(), "tilua-long-cycle-"))
+    const files: Record<string, string> = {
+        "r.tilua": `import { m } from "./m"\nexport const r = { a: 1 }\nprint(m)\n`,
+        "m.tilua": `import { s } from "./s"\nimport { n } from "./n"\nexport const m = s + n\n`,
+        "n.tilua": `import { s } from "./s"\nexport const n = s\n`,
+        "s.tilua": `import type { r } from "./r"\nexport const s = 1\nexport type R = typeof r\n`,
+    }
+    for (const [path, text] of Object.entries(files)) writeFileSync(join(root, path), text)
+    const uri = pathToFileURL(join(root, "r.tilua")).href
+    let document = TextDocument.create(uri, "tilua", 1, files["r.tilua"])
+    const analyzer = new Analyzer({ libs: testLibs, openDocument: path => pathToFileURL(path).href === uri ? document : undefined })
+    let analyzed = 0
+    const analyzeModule = (analyzer as any).analyzeModule.bind(analyzer)
+    ;(analyzer as any).analyzeModule = (...args: unknown[]) => (analyzed++, analyzeModule(...args))
+    const request = (): Analysis => analyzer.sweep(() => analyzer.get(document))
+
+    request()
+    document = TextDocument.create(uri, "tilua", 2, files["r.tilua"].replace("a: 1", "a: 1, b: 2"))
+    const edited = request()
+    analyzed = 0
+    check("long cycle: an edit that changes the exports settles", request() === edited, true)
+    check("long cycle: and the next request analyzes nothing", analyzed, 0)
 
     rmSync(root, { recursive: true, force: true })
 }

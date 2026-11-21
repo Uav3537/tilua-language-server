@@ -2,3 +2,6 @@ node_modules
 dist
 .claude
 .bench-tmp/
+.env
+.env.local
+.env.*.local
