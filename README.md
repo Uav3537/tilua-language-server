@@ -127,12 +127,12 @@ draw the buttons is still a proposed one.
 <!-- compatibility:start -->
 ## Compatibility
 
-`@tilua/language-server@9.2.2` works with these tilua packages. *Released with* is the
+`@tilua/language-server@9.2.3` works with these tilua packages. *Released with* is the
 version it was built and tested against.
 
 | Package | Range | Released with | |
 | --- | --- | --- | --- |
-| `@tilua/parser` | `^9.3.0` | 9.3.0 | dependency |
+| `@tilua/parser` | `^9.4.0` | 9.4.0 | dependency |
 <!-- compatibility:end -->
 
 ## Development
