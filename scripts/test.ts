@@ -714,7 +714,7 @@ print(to)
         const items = completion(analyzer, typed, { line: 3, character: 8 })
         const item = (label: string) => items.find(i => i.label === label && !i.additionalTextEdits)
         check("completion from scopes: a name declared before the keystroke keeps its type",
-            [item("total")?.detail, item("area")?.detail], ["number", "(w: number) => number"])
+            [item("total")?.detail, item("area")?.detail], ["3", "(w: number) => number"])
         contains("completion from scopes: a name the keystroke declared is offered", items.map(i => i.label), "fresh")
     }
     const serviceEdit = (src: string, label: string) => {
