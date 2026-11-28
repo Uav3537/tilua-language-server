@@ -1,6 +1,6 @@
 {
   "name": "@tilua/language-server",
-  "version": "9.2.4",
+  "version": "9.2.5",
   "description": "Language server for tilua (LSP), built on @tilua/parser",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

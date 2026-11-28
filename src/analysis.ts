@@ -273,6 +273,10 @@ export class Analyzer {
     /** Analyze `document`, reusing the previous result while neither it nor
      *  anything it read has changed. */
     get(document: TextDocument): Analysis {
+        return this.sweep(() => this.getNow(document))
+    }
+
+    private getNow(document: TextDocument): Analysis {
         const cached = this.cache.get(document.uri)
         const source = document.getText()
         const same = cached?.version === document.version && cached.source === source
@@ -309,6 +313,10 @@ export class Analyzer {
      *  `copy` says the text is a copy even when it is what the file holds:
      *  the rest of a cycle is then read as it stands, not settled again. */
     analyze(uri: string, version: number, source: string, copy = false): Analysis {
+        return this.sweep(() => this.analyzeNow(uri, version, source, copy))
+    }
+
+    private analyzeNow(uri: string, version: number, source: string, copy: boolean): Analysis {
         const path = pathOfUri(uri)
         if (!path) return this.analyzeModule(uri, version, source, new Set())
         const key = pathKey(path)
@@ -331,7 +339,7 @@ export class Analyzer {
 
     /** The project a file belongs to. */
     projectOf(uri: string): Project {
-        return this.contextFor(pathOfUri(uri)).project
+        return this.sweep(() => this.contextFor(pathOfUri(uri)).project)
     }
 
     /** The file an import in `fromUri` names: a relative path, or a `paths`
@@ -339,15 +347,15 @@ export class Analyzer {
     resolveModulePath(fromUri: string, specifier: string): string | undefined {
         const from = pathOfUri(fromUri)
         if (!from) return undefined
-        return this.candidatesFor(from, specifier).find(candidate => this.readFile(candidate) !== undefined)
+        return this.sweep(() => this.candidatesFor(from, specifier).find(candidate => this.readFile(candidate) !== undefined))
     }
 
     /** What the module at `path` exports, analyzing it if need be. */
     exportsAt(path: string): ModuleExports | undefined {
-        return this.resolvingCycles(pathKey(path), () => {
+        return this.sweep(() => this.resolvingCycles(pathKey(path), () => {
             const exports = this.exportsOf(path, new Set())
             return { result: exports, exports: () => exports }
-        })
+        }))
     }
 
     /** Modules completion wanted the exports of and had no time to analyze. */
@@ -383,14 +391,16 @@ export class Analyzer {
         const [path] = this.warming
         if (path === undefined) return false
         this.warming.delete(path)
-        if (!this.modules.has(pathKey(path))) this.sweep(() => this.exportsAt(path))
+        if (!this.modules.has(pathKey(path))) this.exportsAt(path)
         return this.warming.size > 0
     }
 
     /** The analysis of the module at `path`, analyzing it if need be. */
     moduleAt(path: string): Analysis | undefined {
-        this.exportsAt(path)
-        return this.modules.get(pathKey(path))?.analysis
+        return this.sweep(() => {
+            this.exportsAt(path)
+            return this.modules.get(pathKey(path))?.analysis
+        })
     }
 
     /** What was read from a path last time, and what the file system said
@@ -416,8 +426,14 @@ export class Analyzer {
      *  project of any size — and completion asks for every module of the
      *  project to list what could be imported. A sweep is synchronous, so
      *  nothing on disk or in the editor can move in the middle of one and the
-     *  first answer stands for the rest of it. Outside a sweep every path is
-     *  read afresh, so a file written and then asked about is seen. */
+     *  first answer stands for the rest of it. Between two sweeps every path
+     *  is read afresh, so a file written and then asked about is seen.
+     *
+     *  Every public entry point (`get`, `analyze`, `exportsAt`, ...) opens a
+     *  sweep of its own when called outside one. Without that, a caller that
+     *  never called `sweep` — a script, a test, an embedder — had every
+     *  module resolution re-`stat` the config, type libraries and sourcemap:
+     *  hundreds of thousands of calls, most of a cold analysis's time. */
     sweep<T>(run: () => T): T {
         // A nested call belongs to the sweep already running.
         if (this.stampsThisSweep) return run()
